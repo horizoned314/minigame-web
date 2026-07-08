@@ -3,11 +3,13 @@ import './App.css';
 import StartScreen from './components/StartScreen';
 import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
+import TicTacToe from './components/TicTacToe'; // <-- Import game barumu
 
 function App() {
   const [screen, setScreen] = useState('start'); 
   const [authMode, setAuthMode] = useState(''); 
   const [currentUser, setCurrentUser] = useState('');
+  const [opponent, setOpponent] = useState(''); // <-- State untuk simpan nama musuh
 
   const handleNewGame = () => {
     setAuthMode('register');
@@ -26,6 +28,16 @@ function App() {
 
   const handleBackToMenu = () => {
     setScreen('start');
+  };
+
+  // FUNGSI BARU: Untuk pindah dari dashboard ke game Tic Tac Toe
+  const handleStartGame = (opponentName) => {
+    setOpponent(opponentName);
+    setScreen('ttt'); // Pindah ke screen game
+  };
+
+  const handleBackToDashboard = () => {
+    setScreen('dashboard');
   };
 
   return (
@@ -49,6 +61,16 @@ function App() {
         <Dashboard 
           currentUser={currentUser} 
           onLogout={handleBackToMenu} 
+          onStartGame={handleStartGame} // <-- Oper fungsi ini ke Dashboard
+        />
+      )}
+
+      {/* RENDER SCREEN TIC TAC TOE */}
+      {screen === 'ttt' && (
+        <TicTacToe 
+          player1Name={currentUser || "PLAYER 1"} 
+          player2Name={opponent || "PLAYER 2"} 
+          onBackToDashboard={handleBackToDashboard}
         />
       )}
     </div>

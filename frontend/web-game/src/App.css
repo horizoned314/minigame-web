@@ -568,3 +568,384 @@ body {
   letter-spacing: 1px;
   margin: 0;
 }
+
+/* ==========================================================================
+   MAIL DROPDOWN NOTIFICATION SYSTEM
+   ========================================================================== */
+
+.mail-container-wrapper {
+  position: relative; /* Menjadikan patokan untuk posisi melayang box dropdown */
+  display: inline-block;
+}
+
+.mail-dropdown-box {
+  position: absolute;
+  top: 45px;
+  right: 0;
+  background-color: #0b071a;
+  border: 4px solid var(--color-purple);
+  box-shadow: 6px 6px 0px #000000;
+  width: 320px;
+  padding: 15px;
+  z-index: 100;
+  box-sizing: border-box;
+}
+
+.dropdown-title {
+  font-size: 0.8rem;
+  color: var(--color-pink);
+  border-bottom: 3px dashed var(--color-dark-blue);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  letter-spacing: 1px;
+}
+
+.no-invites-text {
+  font-size: 0.65rem;
+  color: var(--color-blue);
+  text-align: center;
+  margin: 15px 0;
+}
+
+.invites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.invite-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background-color: rgba(58, 12, 163, 0.3);
+  padding: 8px;
+  border: 2px solid var(--color-dark-blue);
+}
+
+.invite-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 70%;
+}
+
+.invite-sender {
+  font-size: 0.65rem;
+  color: var(--color-cyan);
+}
+
+.invite-game {
+  font-size: 0.5rem;
+  color: #ffffff;
+  line-height: 1.3;
+}
+
+.invite-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.invite-btn {
+  background: transparent;
+  border: none;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.65rem;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.invite-btn.accept {
+  color: #00ff66;
+}
+
+.invite-btn.reject {
+  color: var(--color-pink);
+}
+
+.invite-btn:hover {
+  filter: brightness(1.3);
+}
+
+/* ==========================================================================
+   LOADING MODAL POP-UP SYSTEM (WAITING MABAR)
+   ========================================================================== */
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.75); /* Membuat efek gelap/dimmed di belakang */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999; /* Dipastikan melayang di atas segalanya */
+}
+
+.retro-modal-box {
+  background-color: #0b071a;
+  border: 5px solid var(--color-pink);
+  box-shadow: 10px 10px 0px #000000;
+  padding: 30px;
+  width: 90%;
+  max-width: 450px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Animasi Putar Loading Bergaya Pixel Kotak */
+.pixel-spinner {
+  width: 30px;
+  height: 30px;
+  border: 4px solid var(--color-cyan);
+  border-top: 4px solid transparent;
+  animation: pixel-spin 0.8s infinite step-end; /* Efek patah-patah khas game jadul */
+}
+
+.modal-loading-text {
+  font-size: 0.75rem;
+  color: #ffffff;
+  line-height: 1.6;
+  letter-spacing: 1px;
+}
+
+.modal-cancel-btn {
+  background: transparent;
+  border: none;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.8rem;
+  color: var(--color-purple);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.modal-cancel-btn:hover {
+  color: var(--color-pink);
+}
+
+@keyframes pixel-spin {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(90deg); }
+  50% { transform: rotate(180deg); }
+  75% { transform: rotate(270deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   TIC TAC TOE ARCADE STYLE
+   ========================================================================== */
+
+.ttt-container-box {
+  background-color: #0b071a;
+  border: 5px solid var(--color-purple);
+  box-shadow: 8px 8px 0px #000000;
+  padding: 25px;
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  box-sizing: border-box;
+}
+
+.ttt-title {
+  font-size: 1.5rem;
+  color: var(--color-pink);
+  margin: 0;
+  letter-spacing: 2px;
+}
+
+/* Scoreboard Design */
+.ttt-scoreboard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background-color: rgba(58, 12, 163, 0.2);
+  border: 2px solid var(--color-dark-blue);
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.score-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px;
+  border: 2px solid transparent;
+}
+
+/* Indikator giliran menyala dan kedap-kedip */
+.score-card.active-turn {
+  border-color: var(--color-cyan);
+  animation: blink 0.5s infinite step-end;
+}
+
+.player-tag {
+  font-size: 0.55rem;
+  color: #ffffff;
+}
+
+.player-points {
+  font-size: 0.75rem;
+  color: var(--color-cyan);
+}
+
+.round-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.5rem;
+  color: var(--color-pink);
+  gap: 5px;
+}
+
+.round-number {
+  font-size: 0.8rem;
+  color: #ffffff;
+}
+
+/* Status Bar */
+.ttt-status-bar {
+  height: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-text {
+  font-size: 0.65rem;
+  color: #ffffff;
+  margin: 0;
+}
+
+.winner-highlight {
+  color: #00ff66;
+}
+
+.draw-highlight {
+  color: var(--color-cyan);
+}
+
+/* Grid Papan 3x3 */
+.ttt-grid-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 260px;
+  height: 260px;
+}
+
+.ttt-cell {
+  background-color: rgba(11, 7, 26, 0.8);
+  border: 4px solid var(--color-dark-blue);
+  font-family: 'Press Start 2P', monospace;
+  font-size: 1.8rem;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.1s ease;
+  padding: 0;
+}
+
+.ttt-cell:hover {
+  background-color: rgba(67, 97, 238, 0.2);
+  border-color: var(--color-blue);
+}
+
+.ttt-cell.color-x {
+  color: var(--color-pink);
+  text-shadow: 2px 2px var(--color-purple);
+}
+
+.ttt-cell.color-o {
+  color: var(--color-cyan);
+  text-shadow: 2px 2px var(--color-blue);
+}
+
+/* Controls & Modal Game Over */
+.ttt-controls {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-top: 5px;
+}
+
+.ttt-action-btn {
+  background-color: transparent;
+  border: none;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 10px;
+}
+
+.ttt-action-btn.next-btn {
+  color: #00ff66;
+}
+
+.game-over-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.game-over-box {
+  background-color: #0b071a;
+  border: 5px solid var(--color-pink);
+  box-shadow: 8px 8px 0px #000000;
+  padding: 30px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 400px;
+  width: 85%;
+}
+
+.game-over-title {
+  font-size: 1.3rem;
+  color: var(--color-pink);
+  margin: 0;
+}
+
+.final-winner-text {
+  font-size: 0.8rem;
+  color: #00ff66;
+  line-height: 1.5;
+}
+
+.game-over-actions {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+
+.ttt-action-btn.reset-btn {
+  color: var(--color-cyan);
+}
+
+.ttt-action-btn.exit-btn {
+  color: var(--color-purple);
+}
+
+.ttt-action-btn:hover {
+  filter: brightness(1.3);
+}
