@@ -13,17 +13,20 @@ body {
   padding: 0;
   font-family: 'Press Start 2P', monospace;
   color: #ffffff;
-  overflow: hidden;
   background-color: #0b071a;
+  /* FIX: Hanya kunci scroll horizontal, biarkan scroll vertikal aktif jika konten panjang */
+  overflow-x: hidden; 
 }
 
 .screen-container {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
-  width: 100vw;
+  min-height: 100vh; 
+  width: 100%;    
   position: relative;
+  box-sizing: border-box;
+  padding: 40px 20px;    
 }
 
 .start-screen-bg {
@@ -59,8 +62,10 @@ body {
 .arcade-hud {
   position: absolute;
   top: 30px;
-  width: 90%;
-  max-width: 1200px;
+  /* FIX: Paksa menempel ke tepi kiri dan kanan monitor (Full Screen HUD) */
+  left: 40px;
+  right: 40px;
+  width: auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -106,16 +111,18 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 40px;
+  margin-top: 60px;
+  width: 100%;
 }
 
 .retro-main-title {
   font-family: 'Pixelify Sans', sans-serif;
   font-weight: 700;
-  font-size: 9.5rem;
+  /* FIX: Menggunakan clamp agar ukuran teks dinamis mengikuti lebar device */
+  font-size: clamp(3.5rem, 9vw, 8.5rem); 
   text-align: center;
   line-height: 0.85;
-  margin: 0 0 80px 0;
+  margin: 0 0 50px 0;
   letter-spacing: -2px;
   color: #ffffff;
   text-shadow:
@@ -313,10 +320,9 @@ body {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  padding: 0;
+  width: 100%;
+  min-height: 100vh;
   box-sizing: border-box;
-  height: 100vh !important;    
-  overflow-y: auto !important; 
 }
 
 .dashboard-header {
@@ -409,15 +415,17 @@ body {
 
 .games-section {
   z-index: 2;
-  width: 90%;
-  max-width: 1100px;
+  width: 100%;
+  max-width: 1000px; 
   text-align: center;
-  margin: 40px 0;
+  margin: 40px auto; 
+  padding: 0 20px;    
+  box-sizing: border-box;
 }
 
 .select-game-title {
   font-family: 'Pixelify Sans', sans-serif;
-  font-size: 3.5rem;
+  font-size: clamp(2rem, 5vw, 3.5rem); 
   color: #ffffff;
   margin-top: 0;
   margin-bottom: 45px;
@@ -426,8 +434,9 @@ body {
 
 .games-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 35px;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
+  gap: 25px;
+  width: 100%;
 }
 
 .game-card {
@@ -440,9 +449,10 @@ body {
   flex-direction: column;
   justify-content: space-between;
   position: relative;
-  max-height: 100px;
+  max-height: 110px; 
   transition: max-height 0.4s ease, border-color 0.2s ease;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .game-name {
@@ -460,7 +470,7 @@ body {
 
 .game-card:hover {
   border-color: var(--color-pink);
-  max-height: 220px;
+  max-height: 250px;
 }
 
 .game-modes-drawer {
