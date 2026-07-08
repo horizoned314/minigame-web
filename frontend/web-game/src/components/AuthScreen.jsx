@@ -41,8 +41,8 @@ const handleSubmit = async (e) => {
     const endpoint =
       authMode === "register"
         // nanti diganti sesuai endpoint backend
-        ? "http://localhost:8000/auth/register"
-        : "http://localhost:8000/auth/login";
+        ? "https://missed-share-constraints-voluntary.trycloudflare.com/auth/register"
+        : "https://missed-share-constraints-voluntary.trycloudflare.com/auth/login";
 
     const response = await fetch(endpoint, {
       method: "POST",
