@@ -22,22 +22,58 @@ function AuthScreen({ authMode, onAuthSuccess, onBack }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+const handleSubmit = async (e) => {
+  e.preventDefault();
 
-    if (!username || !password || (authMode === 'register' && !confirmPassword)) {
-      setError('FIELDS CANNOT BE EMPTY!');
+  if (!username || !password || (authMode === "register" && !confirmPassword)) {
+    setError("FIELDS CANNOT BE EMPTY!");
+    return;
+  }
+
+  if (authMode === "register" && password !== confirmPassword) {
+    setError("PASSWORDS DO NOT MATCH!");
+    return;
+  }
+
+  setError("");
+
+  try {
+    const endpoint =
+      authMode === "register"
+        // nanti diganti sesuai endpoint backend
+        ? "http://localhost:8000/auth/register"
+        : "http://localhost:8000/auth/login";
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username,
+        password,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setError(data.detail || "Terjadi kesalahan");
       return;
     }
 
-    if (authMode === 'register' && password !== confirmPassword) {
-      setError('PASSWORDS DO NOT MATCH!');
-      return;
+    // Kalau login, simpan JWT
+    if (authMode === "login") {
+      localStorage.setItem("token", data.access_token);
     }
 
-    setError('');
-    onAuthSuccess(username); 
-  };
+    onAuthSuccess(username);
+
+  } catch (err) {
+    console.error(err);
+    setError("Tidak dapat terhubung ke server");
+  }
+};
 
   return (
     <div className="screen-container start-screen-bg">

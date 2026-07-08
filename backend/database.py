@@ -1,8 +1,18 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 from core.config import settings
+import ssl
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+ssl_context = ssl.create_default_context()
+DATABASE_URL = settings.DATABASE_URL.replace("?sslmode=require", "")
+
+engine = create_async_engine(
+    DATABASE_URL, 
+    echo=False,
+    connect_args={
+        "ssl": ssl_context,
+    }, 
+)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, 
