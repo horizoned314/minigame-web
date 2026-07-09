@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { socket } from "../socket";
 
 const EyeOpenIcon = () => (
 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="square" strokeLinejoin="miter">
@@ -69,11 +70,44 @@ const handleSubmit = async (e) => {
       return;
     }  
 
-    if (authMode === "login") {  
-      localStorage.setItem("token", data.access_token);  
-    }  
+// === GANTI BLOK INI ===
+let tokenData = data;
 
-    onAuthSuccess(username);
+if (authMode === "register") {
+  // Register sukses tapi belum dapat token -> auto-login
+  const loginRes = await fetch(`${NGROK_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true",
+    },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!loginRes.ok) {
+    setError("Registrasi berhasil, tapi auto-login gagal. Silakan login manual.");
+    return;
+  }
+
+  tokenData = await loginRes.json();
+}
+
+localStorage.setItem("token", tokenData.access_token);
+
+socket.auth = {
+  token: tokenData.access_token
+};
+
+socket.off("connected_success");
+socket.once("connected_success", (msg) => {
+  console.log(msg);
+});
+
+if (!socket.connected) {
+  socket.connect();
+}
+
+onAuthSuccess(username);
 
   } catch (err) {
     console.error(err);

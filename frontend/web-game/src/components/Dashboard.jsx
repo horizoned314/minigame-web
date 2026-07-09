@@ -8,7 +8,7 @@ const MailIcon = () => (
 );
 
 // Tambahkan onStartGame di baris props bawah ini
-function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
+function Dashboard({ currentUser, onLogout, onStartGame }) {
   const minigames = [
     { id: 'ttt', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
     { id: 'gartic', name: 'GARTIC', desc: 'DRAW AND GUESS' },
@@ -34,6 +34,7 @@ function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
           // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
           const formattedData = data.map(inv => ({
             id: inv.id,
+            roomCode: inv.room_code,
             fromUser: inv.from_user,
             gameName: inv.game_name
           }));
@@ -51,98 +52,92 @@ function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-// Tambahkan useEffect khusus Socket ini di dalam Dashboard
-  useEffect(() => {
-    socket.connect(); // Nyalakan mesin socket saat masuk dashboard
+const handleInviteFriend = async (e, gameName) => {
+  e.preventDefault();
 
-    socket.on("teleport_to_game", (data) => {
-      // Cek apakah panggilan ini untuk SAYA?
-      if (data.inviter === currentUser || data.invitee === currentUser) {
-        
-        // Tentukan siapa musuh saya
-        const myOpponent = data.inviter === currentUser ? data.invitee : data.inviter;
-        
-        // Masuk ke ruangan socket
-        socket.emit("join_room", { room_code: data.room_code });
-        
-        // Pindah layar secara paksa! (Pastikan App.jsx Anda menerima 2 argumen ini)
-        onStartGame(myOpponent, data.room_code); 
-      }
-    });
+  if (!friendName.trim()) {
+    alert("ENTER A VALID USERNAME!");
+    return;
+  }
 
-    return () => {
-      socket.off("teleport_to_game");
-    };
-  }, [currentUser]);
+  const cleanName = friendName.toUpperCase();
 
-  const handleInviteFriend = async (e, gameName) => {
-    e.preventDefault();
-    if (!friendName.trim()) {
-      alert('ENTER A VALID USERNAME!');
+  setTargetFriend(cleanName);
+  setIsWaiting(true);
+
+  socket.emit("create_room", null, async (res) => {
+    if (res.status !== "success") {
+      alert(res.message);
+      setIsWaiting(false);
       return;
     }
-    
-    const cleanName = friendName.toUpperCase();
-    setTargetFriend(cleanName);
-    setIsWaiting(true);
-    
+
+    const roomCode = res.room_code;
+
     try {
       const response = await fetch("http://127.0.0.1:8000/invites/", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({
           from_user: currentUser,
           to_user: cleanName,
-          game_name: gameName
+          game_name: gameName,
+
+          // <-- nanti backend harus menerima ini
+          room_code: roomCode
         })
       });
-      
+
       const data = await response.json();
-      
-      if (response.ok) {
-        alert(`INVITATION SENT TO [${cleanName}]!`);
+
+      if (!response.ok) {
+        alert(data.detail || "ERROR");
         setIsWaiting(false);
-        setFriendName('');
-        setActiveInviteInput(null);
-        // Catatan: onStartGame tidak otomatis dipanggil di sini. 
-        // Anda baru masuk game setelah teman meng-Accept.
-      } else {
-        alert("ERROR: " + data.detail.toUpperCase());
-        setIsWaiting(false);
+        return;
       }
-    } catch (error) {
-      console.error("Gagal mengirim undangan:", error);
-      setIsWaiting(false);
+
+      alert(`INVITATION SENT TO [${cleanName}]!`);
+
+      setFriendName("");
+      setActiveInviteInput(null);
+
+    } catch (err) {
+      console.error(err);
     }
-  };
+  });
+};
 
   const handleCancelInvite = () => {
     setIsWaiting(false);
     setTargetFriend('');
   };
 
-  const handleAcceptInvite = async (id, fromUser, gameName) => {
+  const handleAcceptInvite = async (inviteId, roomCode, inviter) => {
     try {
-      const response = await fetch(`http://127.0.0.1:8000/invites/${id}/accept`, {
-        method: "PUT"
+      const response = await fetch(
+        `http://127.0.0.1:8000/invites/${inviteId}/accept`,
+        {
+          method: "PUT"
+        }
+      );
+
+      if (!response.ok) return;
+
+      setInvitations((prev) =>
+        prev.filter((inv) => inv.id !== inviteId)
+      );
+
+      socket.emit("join_room", {
+        room_code: roomCode,
+        inviter: inviter,
+        invitee: currentUser
       });
-      
-      if (response.ok) {
-        setInvitations(invitations.filter((invite) => invite.id !== id));
-        
-        // --- TAMBAHAN BARU: Picu Sinyal Teleport via Socket ---
-        // Kita jadikan ID undangan (uuid) sebagai Room Code
-        socket.emit("trigger_game_start", {
-          inviter: fromUser,      // Yang mengirim (P2)
-          invitee: currentUser,   // Yang menerima (P1)
-          room_code: id 
-        });
-        
-        // HAPUS onStartGame() dari sini, biarkan useEffect Socket yang memindahkannya
+
+    } catch (err) {
+      console.error(err);
       }
-    } catch (error) {
-      console.error("Gagal menerima undangan:", error);
-    }
   };
 
   const handleRejectInvite = async (id) => {
@@ -152,7 +147,9 @@ function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
       });
       
       if (response.ok) {
-        setInvitations(invitations.filter((invite) => invite.id !== id));
+        setInvitations(prev =>
+          prev.filter(invite => invite.id !== id)
+        );
       }
     } catch (error) {
       console.error("Gagal menolak undangan:", error);
@@ -203,7 +200,13 @@ function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
                         <div className="invite-actions">
                           <button 
                             className="invite-btn accept" 
-                            onClick={() => handleAcceptInvite(invite.id, invite.fromUser, invite.gameName)}
+                            onClick={() =>
+                              handleAcceptInvite(
+                                  invite.id,
+                                  invite.roomCode,
+                                  invite.fromUser
+                              )
+                            }
                           >
                             [ACC]
                           </button>

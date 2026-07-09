@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { io } from "socket.io-client";
+import { socket } from "./socket";
 import './App.css';
 import StartScreen from './components/StartScreen';
 import AuthScreen from './components/AuthScreen';
@@ -14,19 +14,22 @@ function App() {
   const [opponent, setOpponent] = useState(''); // <-- State untuk simpan nama musuh
   const [roomCode, setRoomCode] = useState('');
 
-  const [socket, setSocket] = useState(null);
-  const [roomCode, setRoomCode] = useState('');
-
   useEffect(() => {
-    const s = io();
-    setSocket(s);
-    s.on('game_start', (d)=>{ 
-      console.log('game_start', d);
-      setRoomCode(d.room_code); 
-    const opp = d.players.find(p=>p!==currentUser)||d.players[1]; 
-    setOpponent(opp); 
-    setScreen('ttt'); });
-    return ()=> s.disconnect();
+    function handleTriggerGameStart(data) {
+      console.log("TRIGGER GAME START:", data);
+      setRoomCode(data.room_code);
+
+      const opp = data.players.find((p) => p !== currentUser) || "";
+      setOpponent(opp);
+
+      setScreen("ttt");
+    }
+
+    socket.on("trigger_game_start", handleTriggerGameStart);
+
+    return () => {
+      socket.off("trigger_game_start", handleTriggerGameStart);
+    };
   }, [currentUser]);
 
   const handleNewGame = () => {
@@ -81,7 +84,6 @@ function App() {
           currentUser={currentUser} 
           onLogout={handleBackToMenu} 
           onStartGame={handleStartGame} // <-- Oper fungsi ini ke Dashboard
-          socket={socket}
         />
       )}
 
@@ -90,7 +92,6 @@ function App() {
         <TicTacToe 
           currentUser={currentUser}       // Nama Anda (yang sedang login)
           opponentName={opponent} // Nama musuh
-          socket={socket}
           roomCode={roomCode}       // Kode unik room (misal ID undangan)
           onBackToDashboard={handleBackToDashboard}
         />
