@@ -14,21 +14,24 @@ function App() {
   const [opponent, setOpponent] = useState(''); // <-- State untuk simpan nama musuh
   const [roomCode, setRoomCode] = useState('');
 
+  const [initialGameState, setInitialGameState] = useState(null);
+
   useEffect(() => {
-    function handleTriggerGameStart(data) {
-      console.log("TRIGGER GAME START:", data);
-      setRoomCode(data.room_code);
+  socket.on("game_start", (data) => {
+    console.log("GAME START", data);
 
-      const opp = data.players.find((p) => p !== currentUser) || "";
-      setOpponent(opp);
+    setRoomCode(data.room_code);
 
-      setScreen("ttt");
-    }
+    const opp =
+      data.players.find((p) => p !== currentUser) || "";
 
-    socket.on("trigger_game_start", handleTriggerGameStart);
+    setOpponent(opp);
 
-    return () => {
-      socket.off("trigger_game_start", handleTriggerGameStart);
+    setScreen("ttt");
+  });
+
+  return () => {
+    socket.off("game_start");
     };
   }, [currentUser]);
 
@@ -52,9 +55,10 @@ function App() {
   };
 
   // FUNGSI BARU: Untuk pindah dari dashboard ke game Tic Tac Toe
-  const handleStartGame = (opponentName, currentRoomCode) => {
+  const handleStartGame = (opponentName, currentRoomCode, tictactoeState) => {
     setOpponent(opponentName);
-    setRoomCode(currentRoomCode); // Simpan kode room agar TicTacToe tahu harus masuk ruangan mana
+    setRoomCode(currentRoomCode);
+    setInitialGameState(tictactoeState); // Simpan kode room agar TicTacToe tahu harus masuk ruangan mana
     setScreen('ttt'); // Pindah ke screen game
   };
 
@@ -92,7 +96,8 @@ function App() {
         <TicTacToe 
           currentUser={currentUser}       // Nama Anda (yang sedang login)
           opponentName={opponent} // Nama musuh
-          roomCode={roomCode}       // Kode unik room (misal ID undangan)
+          roomCode={roomCode}
+          initialGameState={initialGameState}       // Kode unik room (misal ID undangan)
           onBackToDashboard={handleBackToDashboard}
         />
       )}

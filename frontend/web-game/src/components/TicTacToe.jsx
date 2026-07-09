@@ -2,31 +2,45 @@ import React, { useState, useEffect } from 'react';
 import ChatBox from './ChatBox';
 import { socket } from '../socket'; 
 
-// 1. UBAH PROPS AGAR COCOK DENGAN APP.JSX
-function TicTacToe({ currentUser, opponentName, roomCode, onBackToDashboard }) {
-  const [board, setBoard] = useState(Array(9).fill(null));
-  const [currentTurn, setCurrentTurn] = useState(null); 
-  const [round, setRound] = useState(1);
+// 1. TAMBAHKAN initialGameState DI PROPS
+function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
+  
+  // 2. GUNAKAN initialGameState SEBAGAI INGATAN AWAL AGAR TIDAK AMNESIA
+  const [board, setBoard] = useState(initialGameState?.board || Array(9).fill(null));
+  const [playerX, setPlayerX] = useState(initialGameState?.player_x || null);
+  const [playerO, setPlayerO] = useState(initialGameState?.player_o || null);
+  const [currentTurn, setCurrentTurn] = useState(initialGameState?.current_turn || null); 
+  const [round, setRound] = useState(initialGameState?.round || 1);
   const [scores, setScores] = useState({ p1: 0, p2: 0 });
-  const [roundWinner, setRoundWinner] = useState(null); 
-  const [isGameOver, setIsGameOver] = useState(false);
-  const [finalWinnerMessage, setFinalWinnerMessage] = useState('');
+  const [roundWinner, setRoundWinner] = useState(initialGameState?.round_winner || null); 
+  const [isGameOver, setIsGameOver] = useState(initialGameState?.is_game_over || false);
+  const [finalWinnerMessage, setFinalWinnerMessage] = useState(initialGameState?.final_message || '');
 
-  // 2. KITA BUAT ALIAS AGAR KODE DI BAWAHNYA TIDAK PERLU BANYAK DIUBAH
-  // (Pastikan tidak undefined saat dipanggil, default ke string kosong)
   const player1Name = currentUser || "P1";
   const player2Name = opponentName || "P2";
 
-  // DENGARKAN UPDATE DARI SERVER BACKEND
   useEffect(() => {
+    // Sinkronisasi skor awal jika ada data dari backend
+    if (initialGameState?.scores) {
+      setScores({
+        p1: initialGameState.scores[player1Name] || initialGameState.scores[player1Name.toLowerCase()] || 0,
+        p2: initialGameState.scores[player2Name] || initialGameState.scores[player2Name.toLowerCase()] || 0
+      });
+    }
+
+    // Dengarkan update selanjutnya dari server
     socket.on('tictactoe_update', (gameState) => {
+      console.log("📥 [UPDATE DARI SERVER]:", gameState);
       setBoard(gameState.board);
       setCurrentTurn(gameState.current_turn);
       setRound(gameState.round);
+
+      if (gameState.player_x) setPlayerX(gameState.player_x);
+      if (gameState.player_o) setPlayerO(gameState.player_o);
       
       setScores({
-        p1: gameState.scores[player1Name] || 0,
-        p2: gameState.scores[player2Name] || 0
+        p1: gameState.scores[player1Name] || gameState.scores[player1Name.toLowerCase()] || 0,
+        p2: gameState.scores[player2Name] || gameState.scores[player2Name.toLowerCase()] || 0
       });
 
       setRoundWinner(gameState.round_winner);
@@ -37,26 +51,38 @@ function TicTacToe({ currentUser, opponentName, roomCode, onBackToDashboard }) {
     return () => {
       socket.off('tictactoe_update');
     };
-  }, [player1Name, player2Name]);
+  }, [player1Name, player2Name, initialGameState]);
 
-  // KIRIM KLIK KE SERVER
   const handleCellClick = (index) => {
-    if (board[index] || roundWinner || isGameOver || currentTurn !== currentUser) return;
+    // FUNGSI DETEKTIF: Akan muncul di F12 setiap kali Anda klik
+    console.log(`\n--- KLIK KOTAK ${index} ---`);
+    console.log(`Giliran Server: ${currentTurn} | Nama Saya: ${currentUser}`);
 
+    const safeTurn = (currentTurn || "").toUpperCase();
+    const safeMe = (currentUser || "").toUpperCase();
+
+    if (board[index]) {
+      console.log("❌ BLOKIR: Kotak sudah terisi.");
+      return;
+    }
+    if (roundWinner || isGameOver) {
+      console.log("❌ BLOKIR: Ronde/Game sudah selesai.");
+      return;
+    }
+    if (safeTurn !== safeMe) {
+      console.log("❌ BLOKIR: Bukan giliranmu!");
+      return;
+    }
+
+    console.log("✅ KLIK SAH! Mengirim tictactoe_move...");
     socket.emit('tictactoe_move', {
       room_code: roomCode,
       index: index
     });
   };
 
-  // TOMBOL KONTROL
-  const handleNextAction = () => {
-    socket.emit('tictactoe_action', { room_code: roomCode, action: 'next_round' });
-  };
-
-  const handleResetGame = () => {
-    socket.emit('tictactoe_action', { room_code: roomCode, action: 'rematch' });
-  };
+  const handleNextAction = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'next_round' });
+  const handleResetGame = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'rematch' });
 
   return (
     <div className="screen-container start-screen-bg ttt-layout">
@@ -67,9 +93,10 @@ function TicTacToe({ currentUser, opponentName, roomCode, onBackToDashboard }) {
           <h2 className="ttt-title">TIC TAC TOE</h2>
           
           <div className="ttt-scoreboard">
-            {/* TAMBAHKAN TANDA TANYA (?.) PADA SEMUA toUpperCase UNTUK MENCEGAH CRASH */}
             <div className={`score-card ${currentTurn === player1Name && !roundWinner ? 'active-turn' : ''}`}>
-              <span className="player-tag">[X] {player1Name?.toUpperCase() || "PLAYER 1"}</span>
+              <span className="player-tag">
+                [{player1Name === playerX ? 'X' : 'O'}] {player1Name?.toUpperCase() || "PLAYER 1"}
+              </span>
               <span className="player-points">{scores.p1} PTS</span>
             </div>
             <div className="round-display">
@@ -77,7 +104,9 @@ function TicTacToe({ currentUser, opponentName, roomCode, onBackToDashboard }) {
               <span className="round-number">{round} / 3</span>
             </div>
             <div className={`score-card ${currentTurn === player2Name && !roundWinner ? 'active-turn' : ''}`}>
-              <span className="player-tag">[O] {player2Name?.toUpperCase() || "PLAYER 2"}</span>
+              <span className="player-tag">
+                [{player2Name === playerX ? 'X' : 'O'}] {player2Name?.toUpperCase() || "PLAYER 2"}
+              </span>
               <span className="player-points">{scores.p2} PTS</span>
             </div>
           </div>
@@ -135,7 +164,6 @@ function TicTacToe({ currentUser, opponentName, roomCode, onBackToDashboard }) {
         </div>
 
         <ChatBox currentUser={currentUser} gameRoomId={roomCode} />
-
       </div>
     </div>
   );

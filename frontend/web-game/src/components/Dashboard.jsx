@@ -28,7 +28,7 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     const fetchInvites = async () => {
       try {
         // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
-        const response = await fetch(`http://127.0.0.1:8000/invites/${currentUser.toUpperCase()}`);
+        const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${currentUser.toUpperCase()}`);
         if (response.ok) {
           const data = await response.json();
           // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
@@ -51,6 +51,25 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     const interval = setInterval(fetchInvites, 5000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  useEffect(() => {
+    function handleGameStart(payload) {
+      console.log("[SOCKET] trigger_game_start diterima:", payload);
+      setIsWaiting(false);
+      
+      // 1. Ambil nama musuh dari array players (Cari yang namanya BUKAN nama kita)
+      // Array players dari backend bentuknya seperti: ["RUUNA", "RAFIF"]
+      const opponentString = payload.players.find(
+        (p) => p.toUpperCase() !== currentUser.toUpperCase()
+      ) || "OPPONENT";
+
+      // 2. Oper data sesuai permintaan App.jsx (Parameter 1: Nama Musuh, Parameter 2: Kode Room)
+      onStartGame(opponentString, payload.room_code, payload.tictactoe_state); 
+    }
+
+    socket.on("trigger_game_start", handleGameStart);
+    return () => socket.off("trigger_game_start", handleGameStart);
+  }, [currentUser, onStartGame]);
 
 const handleInviteFriend = async (e, gameName) => {
   e.preventDefault();
@@ -75,7 +94,7 @@ const handleInviteFriend = async (e, gameName) => {
     const roomCode = res.room_code;
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/invites/", {
+      const response = await fetch("https://electrocratic-debatable-joannie.ngrok-free.dev/invites/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -117,7 +136,7 @@ const handleInviteFriend = async (e, gameName) => {
   const handleAcceptInvite = async (inviteId, roomCode, inviter) => {
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/invites/${inviteId}/accept`,
+        `https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${inviteId}/accept`,
         {
           method: "PUT"
         }
@@ -142,7 +161,7 @@ const handleInviteFriend = async (e, gameName) => {
 
   const handleRejectInvite = async (id) => {
     try {
-      const response = await fetch(`http://127.0.0.1:8000/invites/${id}/reject`, {
+      const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${id}/reject`, {
         method: "PUT"
       });
       
