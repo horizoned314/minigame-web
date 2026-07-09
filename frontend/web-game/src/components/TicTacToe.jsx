@@ -1,151 +1,130 @@
 import React, { useState, useEffect } from 'react';
-import ChatBox from './ChatBox'; // <-- 1. Kita impor ChatBox secara modular di sini
+import ChatBox from './ChatBox';
+import { socket } from '../socket'; 
 
-function TicTacToe({ player1Name, player2Name, onBackToDashboard }) {
-  // P1 kita anggap 'X', P2 kita anggap 'O'
-  const [board, setBoard] = useState(Array(9).fill(null));
-  const [currentTurn, setCurrentTurn] = useState(null); // 'X' atau 'O'
-  const [round, setRound] = useState(1);
+// 1. TAMBAHKAN initialGameState DI PROPS
+function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
+  
+  // 2. GUNAKAN initialGameState SEBAGAI INGATAN AWAL AGAR TIDAK AMNESIA
+  const [board, setBoard] = useState(initialGameState?.board || Array(9).fill(null));
+  const [playerX, setPlayerX] = useState(initialGameState?.player_x || null);
+  const [playerO, setPlayerO] = useState(initialGameState?.player_o || null);
+  const [currentTurn, setCurrentTurn] = useState(initialGameState?.current_turn || null); 
+  const [round, setRound] = useState(initialGameState?.round || 1);
   const [scores, setScores] = useState({ p1: 0, p2: 0 });
-  const [roundWinner, setRoundWinner] = useState(null); // 'X', 'O', 'DRAW', atau null
-  const [isGameOver, setIsGameOver] = useState(false);
-  const [finalWinnerMessage, setFinalWinnerMessage] = useState('');
+  const [roundWinner, setRoundWinner] = useState(initialGameState?.round_winner || null); 
+  const [isGameOver, setIsGameOver] = useState(initialGameState?.is_game_over || false);
+  const [finalWinnerMessage, setFinalWinnerMessage] = useState(initialGameState?.final_message || '');
 
-  // Kombinasi kemenangan Tic Tac Toe
-  const winningLines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8], // Horisontal
-    [0, 3, 6], [1, 4, 7], [2, 5, 8], // Vertikal
-    [0, 4, 8], [2, 4, 6]             // Diagonal
-  ];
+  const player1Name = currentUser || "P1";
+  const player2Name = opponentName || "P2";
 
-  // Efek untuk memulai ronde baru & mengacak giliran pertama
   useEffect(() => {
-    startNewRound();
-  }, [round]);
+    // Sinkronisasi skor awal jika ada data dari backend
+    if (initialGameState?.scores) {
+      setScores({
+        p1: initialGameState.scores[player1Name] || initialGameState.scores[player1Name.toLowerCase()] || 0,
+        p2: initialGameState.scores[player2Name] || initialGameState.scores[player2Name.toLowerCase()] || 0
+      });
+    }
 
-  const startNewRound = () => {
-    setBoard(Array(9).fill(null));
-    setRoundWinner(null);
-    // Mengacak siapa yang jalan duluan ('X' atau 'O')
-    const randomFirstTurn = Math.random() < 0.5 ? 'X' : 'O';
-    setCurrentTurn(randomFirstTurn);
-  };
+    // Dengarkan update selanjutnya dari server
+    socket.on('tictactoe_update', (gameState) => {
+      console.log("📥 [UPDATE DARI SERVER]:", gameState);
+      setBoard(gameState.board);
+      setCurrentTurn(gameState.current_turn);
+      setRound(gameState.round);
 
-  // Logika ketika kotak papan diklik
+      if (gameState.player_x) setPlayerX(gameState.player_x);
+      if (gameState.player_o) setPlayerO(gameState.player_o);
+      
+      setScores({
+        p1: gameState.scores[player1Name] || gameState.scores[player1Name.toLowerCase()] || 0,
+        p2: gameState.scores[player2Name] || gameState.scores[player2Name.toLowerCase()] || 0
+      });
+
+      setRoundWinner(gameState.round_winner);
+      setIsGameOver(gameState.is_game_over);
+      setFinalWinnerMessage(gameState.final_message || '');
+    });
+
+    return () => {
+      socket.off('tictactoe_update');
+    };
+  }, [player1Name, player2Name, initialGameState]);
+
   const handleCellClick = (index) => {
-    // Jangan izinkan klik jika kotak sudah terisi, ronde selesai, atau game over
-    if (board[index] || roundWinner || isGameOver) return;
+    // FUNGSI DETEKTIF: Akan muncul di F12 setiap kali Anda klik
+    console.log(`\n--- KLIK KOTAK ${index} ---`);
+    console.log(`Giliran Server: ${currentTurn} | Nama Saya: ${currentUser}`);
 
-    const newBoard = [...board];
-    newBoard[index] = currentTurn;
-    setBoard(newBoard);
+    const safeTurn = (currentTurn || "").toUpperCase();
+    const safeMe = (currentUser || "").toUpperCase();
 
-    checkRoundStatus(newBoard);
-  };
-
-  // Cek apakah ada yang menang ronde atau seri
-  const checkRoundStatus = (currentBoard) => {
-    let hasWinner = false;
-
-    for (let line of winningLines) {
-      const [a, b, c] = line;
-      if (currentBoard[a] && currentBoard[a] === currentBoard[b] && currentBoard[a] === currentBoard[c]) {
-        hasWinner = true;
-        const winner = currentBoard[a]; // 'X' atau 'O'
-        setRoundWinner(winner);
-        
-        // Update Skor Sementara
-        if (winner === 'X') {
-          setScores(prev => ({ ...prev, p1: prev.p1 + 1 }));
-        } else {
-          setScores(prev => ({ ...prev, p2: prev.p2 + 1 }));
-        }
-        return;
-      }
+    if (board[index]) {
+      console.log("❌ BLOKIR: Kotak sudah terisi.");
+      return;
+    }
+    if (roundWinner || isGameOver) {
+      console.log("❌ BLOKIR: Ronde/Game sudah selesai.");
+      return;
+    }
+    if (safeTurn !== safeMe) {
+      console.log("❌ BLOKIR: Bukan giliranmu!");
+      return;
     }
 
-    // Jika tidak ada yang menang dan papan sudah penuh, berarti seri (DRAW)
-    if (!hasWinner && !currentBoard.includes(null)) {
-      setRoundWinner('DRAW');
-    } else {
-      // Ganti giliran jika permainan ronde ini masih berlanjut
-      setCurrentTurn(currentTurn === 'X' ? 'O' : 'X');
-    }
+    console.log("✅ KLIK SAH! Mengirim tictactoe_move...");
+    socket.emit('tictactoe_move', {
+      room_code: roomCode,
+      index: index
+    });
   };
 
-  // Logika tombol "NEXT ROUND" atau "SEE FINAL RESULT"
-  const handleNextAction = () => {
-    if (round < 3) {
-      // Lanjut ke ronde berikutnya
-      setRound(prev => prev + 1);
-    } else {
-      // Sudah menyelesaikan ronde 3, tentukan pemenang akhir berdasarkan skor terbanyak
-      setIsGameOver(true);
-      if (scores.p1 > scores.p2) {
-        setFinalWinnerMessage(`${player1Name.toUpperCase()} WINS THE MATCH!`);
-      } else if (scores.p2 > scores.p1) {
-        setFinalWinnerMessage(`${player2Name.toUpperCase()} WINS THE MATCH!`);
-      } else {
-        setFinalWinnerMessage("MATCH ENDS IN A TIE!");
-      }
-    }
-  };
-
-  // Reset ulang seluruh game dari awal ronde 1
-  const handleResetGame = () => {
-    setScores({ p1: 0, p2: 0 });
-    setIsGameOver(false);
-    setFinalWinnerMessage('');
-    if (round === 1) {
-      startNewRound();
-    } else {
-      setRound(1);
-    }
-  };
+  const handleNextAction = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'next_round' });
+  const handleResetGame = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'rematch' });
 
   return (
     <div className="screen-container start-screen-bg ttt-layout">
       <div className="crt-overlay"></div>
 
-      {/* 2. BUNGKUSAN BARU: game-match-wrapper menyatukan Papan Game & Kotak Chat berdampingan */}
       <div className="game-match-wrapper">
-        
-        {/* SISI KIRI: Papan Utama Tic Tac Toe */}
         <div className="ttt-container-box">
           <h2 className="ttt-title">TIC TAC TOE</h2>
           
-          {/* SCOREBOARD BOARD */}
           <div className="ttt-scoreboard">
-            <div className={`score-card ${currentTurn === 'X' && !roundWinner ? 'active-turn' : ''}`}>
-              <span className="player-tag">[X] {player1Name.toUpperCase()}</span>
+            <div className={`score-card ${currentTurn === player1Name && !roundWinner ? 'active-turn' : ''}`}>
+              <span className="player-tag">
+                [{player1Name === playerX ? 'X' : 'O'}] {player1Name?.toUpperCase() || "PLAYER 1"}
+              </span>
               <span className="player-points">{scores.p1} PTS</span>
             </div>
             <div className="round-display">
               <span>ROUND</span>
               <span className="round-number">{round} / 3</span>
             </div>
-            <div className={`score-card ${currentTurn === 'O' && !roundWinner ? 'active-turn' : ''}`}>
-              <span className="player-tag">[O] {player2Name.toUpperCase()}</span>
+            <div className={`score-card ${currentTurn === player2Name && !roundWinner ? 'active-turn' : ''}`}>
+              <span className="player-tag">
+                [{player2Name === playerX ? 'X' : 'O'}] {player2Name?.toUpperCase() || "PLAYER 2"}
+              </span>
               <span className="player-points">{scores.p2} PTS</span>
             </div>
           </div>
 
-          {/* STATUS TURN ATAU WINNER RONDE */}
           <div className="ttt-status-bar">
             {!roundWinner && !isGameOver && (
               <p className="status-text">
-                {currentTurn === 'X' ? `${player1Name.toUpperCase()}'S TURN` : `${player2Name.toUpperCase()}'S TURN`}
+                {currentTurn === currentUser ? "YOUR TURN" : `${currentTurn?.toUpperCase() || "OPPONENT"}'S TURN`}
               </p>
             )}
             {roundWinner && roundWinner !== 'DRAW' && (
               <p className="status-text winner-highlight">
-                {roundWinner === 'X' ? `${player1Name.toUpperCase()} WINS ROUND ${round}!` : `${player2Name.toUpperCase()} WINS ROUND ${round}!`}
+                {roundWinner === player1Name ? `${player1Name?.toUpperCase()} WINS ROUND ${round}!` : `${player2Name?.toUpperCase()} WINS ROUND ${round}!`}
               </p>
             )}
             {roundWinner === 'DRAW' && <p className="status-text draw-highlight">ROUND {round} IS A DRAW!</p>}
           </div>
 
-          {/* PAPAN GAME 3X3 */}
           <div className="ttt-grid-board">
             {board.map((cell, index) => (
               <button 
@@ -158,7 +137,6 @@ function TicTacToe({ player1Name, player2Name, onBackToDashboard }) {
             ))}
           </div>
 
-          {/* KONTROL ACTION BUTTONS */}
           <div className="ttt-controls">
             {roundWinner && !isGameOver && (
               <button className="ttt-action-btn next-btn" onClick={handleNextAction}>
@@ -185,10 +163,7 @@ function TicTacToe({ player1Name, player2Name, onBackToDashboard }) {
           </div>
         </div>
 
-        {/* SISI KANAN: Kotak Chat Modular */}
-        {/* Kita oper nama kamu (player1Name) ke prop currentUser agar logikanya tahu siapa pengirimnya */}
-        <ChatBox currentUser={player1Name} gameRoomId="room-ttt-01" />
-
+        <ChatBox currentUser={currentUser} gameRoomId={roomCode} />
       </div>
     </div>
   );

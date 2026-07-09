@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { socket } from '../socket';
 
 const MailIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" className="pixel-mail-icon">
@@ -21,48 +22,157 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
   const [isWaiting, setIsWaiting] = useState(false);
   const [targetFriend, setTargetFriend] = useState('');
 
-  const [invitations, setInvitations] = useState([
-    { id: 1, fromUser: 'DEKU_99', gameName: 'TIC TAC TOE' },
-    { id: 2, fromUser: 'KACCHAN', gameName: 'GARTIC' }
-  ]);
+  const [invitations, setInvitations] = useState([]);
 
-  const handleInviteFriend = (e, gameName) => {
-    e.preventDefault();
-    if (!friendName.trim()) {
-      alert('ENTER A VALID USERNAME!');
+  useEffect(() => {
+    const fetchInvites = async () => {
+      try {
+        // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
+        const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${currentUser.toUpperCase()}`);
+        if (response.ok) {
+          const data = await response.json();
+          // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
+          const formattedData = data.map(inv => ({
+            id: inv.id,
+            roomCode: inv.room_code,
+            fromUser: inv.from_user,
+            gameName: inv.game_name
+          }));
+          setInvitations(formattedData);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil pesan:", error);
+      }
+    };
+
+    fetchInvites();
+    
+    // Polling: Cek pesan baru setiap 5 detik
+    const interval = setInterval(fetchInvites, 5000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
+  useEffect(() => {
+    function handleGameStart(payload) {
+      console.log("[SOCKET] trigger_game_start diterima:", payload);
+      setIsWaiting(false);
+      
+      // 1. Ambil nama musuh dari array players (Cari yang namanya BUKAN nama kita)
+      // Array players dari backend bentuknya seperti: ["RUUNA", "RAFIF"]
+      const opponentString = payload.players.find(
+        (p) => p.toUpperCase() !== currentUser.toUpperCase()
+      ) || "OPPONENT";
+
+      // 2. Oper data sesuai permintaan App.jsx (Parameter 1: Nama Musuh, Parameter 2: Kode Room)
+      onStartGame(opponentString, payload.room_code, payload.tictactoe_state); 
+    }
+
+    socket.on("trigger_game_start", handleGameStart);
+    return () => socket.off("trigger_game_start", handleGameStart);
+  }, [currentUser, onStartGame]);
+
+const handleInviteFriend = async (e, gameName) => {
+  e.preventDefault();
+
+  if (!friendName.trim()) {
+    alert("ENTER A VALID USERNAME!");
+    return;
+  }
+
+  const cleanName = friendName.toUpperCase();
+
+  setTargetFriend(cleanName);
+  setIsWaiting(true);
+
+  socket.emit("create_room", null, async (res) => {
+    if (res.status !== "success") {
+      alert(res.message);
+      setIsWaiting(false);
       return;
     }
-    
-    const cleanName = friendName.toUpperCase();
-    setTargetFriend(cleanName);
-    setIsWaiting(true);
-    
-    // SIMULASI TIMER (BACKEND PALSU): 
-    // Ceritanya nunggu 2 detik, lalu musuh menerima invite, dan game dimulai!
-    setTimeout(() => {
-      setIsWaiting(false);
-      setFriendName('');
+
+    const roomCode = res.room_code;
+
+    try {
+      const response = await fetch("https://electrocratic-debatable-joannie.ngrok-free.dev/invites/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          from_user: currentUser,
+          to_user: cleanName,
+          game_name: gameName,
+
+          // <-- nanti backend harus menerima ini
+          room_code: roomCode
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.detail || "ERROR");
+        setIsWaiting(false);
+        return;
+      }
+
+      alert(`INVITATION SENT TO [${cleanName}]!`);
+
+      setFriendName("");
       setActiveInviteInput(null);
-      
-      // Pindah ke halaman TicTacToe bawa nama temanmu
-      onStartGame(cleanName); 
-    }, 2000); 
-  };
+
+    } catch (err) {
+      console.error(err);
+    }
+  });
+};
 
   const handleCancelInvite = () => {
     setIsWaiting(false);
     setTargetFriend('');
   };
 
-  const handleAcceptInvite = (id, fromUser, gameName) => {
-    setInvitations(invitations.filter((invite) => invite.id !== id));
-    
-    // Langsung masuk ke game bawa nama orang yang nginvite kamu
-    onStartGame(fromUser.toUpperCase());
+  const handleAcceptInvite = async (inviteId, roomCode, inviter) => {
+    try {
+      const response = await fetch(
+        `https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${inviteId}/accept`,
+        {
+          method: "PUT"
+        }
+      );
+
+      if (!response.ok) return;
+
+      setInvitations((prev) =>
+        prev.filter((inv) => inv.id !== inviteId)
+      );
+
+      socket.emit("join_room", {
+        room_code: roomCode,
+        inviter: inviter,
+        invitee: currentUser
+      });
+
+    } catch (err) {
+      console.error(err);
+      }
   };
 
-  const handleRejectInvite = (id) => {
-    setInvitations(invitations.filter((invite) => invite.id !== id));
+  const handleRejectInvite = async (id) => {
+    try {
+      const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${id}/reject`, {
+        method: "PUT"
+      });
+      
+      if (response.ok) {
+        setInvitations(prev =>
+          prev.filter(invite => invite.id !== id)
+        );
+      }
+    } catch (error) {
+      console.error("Gagal menolak undangan:", error);
+    }
   };
 
   return (
@@ -109,7 +219,13 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
                         <div className="invite-actions">
                           <button 
                             className="invite-btn accept" 
-                            onClick={() => handleAcceptInvite(invite.id, invite.fromUser, invite.gameName)}
+                            onClick={() =>
+                              handleAcceptInvite(
+                                  invite.id,
+                                  invite.roomCode,
+                                  invite.fromUser
+                              )
+                            }
                           >
                             [ACC]
                           </button>

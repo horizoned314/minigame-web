@@ -1,25 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { socket } from '../socket';
 
 function ChatBox({ currentUser, gameRoomId }) {
-  const [messages, setMessages] = useState([
-    { id: 1, sender: 'SYSTEM', text: 'WELCOME TO THE ROOM!' },
-    { id: 2, sender: 'OPPONENT', text: 'GLHF! Semoga menang ya haha' }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    // Ambil histori chat saat komponen pertama kali muncul
+    socket.emit('get_chat_history', { room_code: gameRoomId }, (res) => {
+      if (res.status === 'success') {
+        setMessages(res.history);
+      }
+    });
+
+    // Dengarkan pesan baru
+    function handleReceiveMessage(payload) {
+      setMessages((prev) => [...prev, payload]);
+    }
+    socket.on('receive_message', handleReceiveMessage);
+
+    return () => {
+      socket.off('receive_message', handleReceiveMessage);
+    };
+  }, [gameRoomId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!inputText.trim()) return;
 
-    // Simulasi Chat Lokal (Nanti bagian ini yang dihubungkan ke Backend/Socket.io)
-    const newMessage = {
-      id: Date.now(),
-      sender: currentUser.toUpperCase(),
-      text: inputText
-    };
+    socket.emit('send_message', {
+      room_code: gameRoomId,
+      message: inputText
+    }, (res) => {
+      if (res.status !== 'success') {
+        console.error('Gagal kirim pesan:', res.message);
+      }
+    });
 
-    setMessages([...messages, newMessage]);
-    setInputText(''); // Kosongkan input setelah kirim
+    setInputText('');
   };
 
   return (
@@ -28,17 +51,19 @@ function ChatBox({ currentUser, gameRoomId }) {
         <span>ROOM CHAT</span>
       </div>
 
-      {/* AREA DAFTAR PESAN */}
       <div className="chat-messages-area">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`chat-bubble ${msg.sender === currentUser.toUpperCase() ? 'chat-me' : 'chat-others'}`}>
-            <span className="chat-sender">[{msg.sender}]</span>
-            <p className="chat-text">{msg.text}</p>
+        {messages.map((msg, idx) => (
+          <div
+            key={idx}
+            className={`chat-bubble ${msg.sender.toUpperCase() === currentUser.toUpperCase() ? 'chat-me' : 'chat-others'}`}
+          >
+            <span className="chat-sender">[{msg.sender.toUpperCase()}]</span>
+            <p className="chat-text">{msg.message}</p>
           </div>
         ))}
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* FORM INPUT CHAT */}
       <form onSubmit={handleSendMessage} className="chat-input-form">
         <input
           type="text"
