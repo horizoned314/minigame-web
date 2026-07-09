@@ -4,11 +4,16 @@ from core.config import settings
 
 import models
 
-from routers import auth 
+from routers import auth, invites
 
 import socketio
 from sockets import sio
 import sockets.connection
+import sockets.chat
+import sockets.invite_flow
+
+# sockets/games
+import sockets.games.tictactoe
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -27,6 +32,7 @@ app.add_middleware(
 
 # --- TAMBAHKAN BARIS INI UNTUK MENDAFTARKAN ROUTER ---
 app.include_router(auth.router)
+app.include_router(invites.router)
 
 @app.get("/")
 async def root():
