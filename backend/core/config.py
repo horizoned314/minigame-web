@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     
     # Pastikan menggunakan postgresql+asyncpg untuk operasi I/O asinkron
     DATABASE_URL: str = os.getenv("DATABASE_URL")
+
+    # testing urls
+    database_url_test: str
+    supabase_url: str
     
     # Secret Key JWT
     SECRET_KEY: str = os.getenv("SECRET_KEY")
