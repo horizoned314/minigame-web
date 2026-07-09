@@ -1,0 +1,14 @@
+frontend/
+.git
+.gitignore
+.idea
+.vscode
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.md
+**/__pycache__/
+**/*.pyc
+.git/
