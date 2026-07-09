@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { socket } from '../socket';
 
 const MailIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" className="pixel-mail-icon">
@@ -7,7 +8,7 @@ const MailIcon = () => (
 );
 
 // Tambahkan onStartGame di baris props bawah ini
-function Dashboard({ currentUser, onLogout, onStartGame }) {
+function Dashboard({ currentUser, onLogout, onStartGame, socket }) {
   const minigames = [
     { id: 'ttt', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
     { id: 'gartic', name: 'GARTIC', desc: 'DRAW AND GUESS' },
@@ -21,12 +22,60 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
   const [isWaiting, setIsWaiting] = useState(false);
   const [targetFriend, setTargetFriend] = useState('');
 
-  const [invitations, setInvitations] = useState([
-    { id: 1, fromUser: 'DEKU_99', gameName: 'TIC TAC TOE' },
-    { id: 2, fromUser: 'KACCHAN', gameName: 'GARTIC' }
-  ]);
+  const [invitations, setInvitations] = useState([]);
 
-  const handleInviteFriend = (e, gameName) => {
+  useEffect(() => {
+    const fetchInvites = async () => {
+      try {
+        // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
+        const response = await fetch(`http://127.0.0.1:8000/invites/${currentUser.toUpperCase()}`);
+        if (response.ok) {
+          const data = await response.json();
+          // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
+          const formattedData = data.map(inv => ({
+            id: inv.id,
+            fromUser: inv.from_user,
+            gameName: inv.game_name
+          }));
+          setInvitations(formattedData);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil pesan:", error);
+      }
+    };
+
+    fetchInvites();
+    
+    // Polling: Cek pesan baru setiap 5 detik
+    const interval = setInterval(fetchInvites, 5000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
+// Tambahkan useEffect khusus Socket ini di dalam Dashboard
+  useEffect(() => {
+    socket.connect(); // Nyalakan mesin socket saat masuk dashboard
+
+    socket.on("teleport_to_game", (data) => {
+      // Cek apakah panggilan ini untuk SAYA?
+      if (data.inviter === currentUser || data.invitee === currentUser) {
+        
+        // Tentukan siapa musuh saya
+        const myOpponent = data.inviter === currentUser ? data.invitee : data.inviter;
+        
+        // Masuk ke ruangan socket
+        socket.emit("join_room", { room_code: data.room_code });
+        
+        // Pindah layar secara paksa! (Pastikan App.jsx Anda menerima 2 argumen ini)
+        onStartGame(myOpponent, data.room_code); 
+      }
+    });
+
+    return () => {
+      socket.off("teleport_to_game");
+    };
+  }, [currentUser]);
+
+  const handleInviteFriend = async (e, gameName) => {
     e.preventDefault();
     if (!friendName.trim()) {
       alert('ENTER A VALID USERNAME!');
@@ -37,16 +86,34 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     setTargetFriend(cleanName);
     setIsWaiting(true);
     
-    // SIMULASI TIMER (BACKEND PALSU): 
-    // Ceritanya nunggu 2 detik, lalu musuh menerima invite, dan game dimulai!
-    setTimeout(() => {
-      setIsWaiting(false);
-      setFriendName('');
-      setActiveInviteInput(null);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/invites/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_user: currentUser,
+          to_user: cleanName,
+          game_name: gameName
+        })
+      });
       
-      // Pindah ke halaman TicTacToe bawa nama temanmu
-      onStartGame(cleanName); 
-    }, 2000); 
+      const data = await response.json();
+      
+      if (response.ok) {
+        alert(`INVITATION SENT TO [${cleanName}]!`);
+        setIsWaiting(false);
+        setFriendName('');
+        setActiveInviteInput(null);
+        // Catatan: onStartGame tidak otomatis dipanggil di sini. 
+        // Anda baru masuk game setelah teman meng-Accept.
+      } else {
+        alert("ERROR: " + data.detail.toUpperCase());
+        setIsWaiting(false);
+      }
+    } catch (error) {
+      console.error("Gagal mengirim undangan:", error);
+      setIsWaiting(false);
+    }
   };
 
   const handleCancelInvite = () => {
@@ -54,15 +121,42 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     setTargetFriend('');
   };
 
-  const handleAcceptInvite = (id, fromUser, gameName) => {
-    setInvitations(invitations.filter((invite) => invite.id !== id));
-    
-    // Langsung masuk ke game bawa nama orang yang nginvite kamu
-    onStartGame(fromUser.toUpperCase());
+  const handleAcceptInvite = async (id, fromUser, gameName) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/invites/${id}/accept`, {
+        method: "PUT"
+      });
+      
+      if (response.ok) {
+        setInvitations(invitations.filter((invite) => invite.id !== id));
+        
+        // --- TAMBAHAN BARU: Picu Sinyal Teleport via Socket ---
+        // Kita jadikan ID undangan (uuid) sebagai Room Code
+        socket.emit("trigger_game_start", {
+          inviter: fromUser,      // Yang mengirim (P2)
+          invitee: currentUser,   // Yang menerima (P1)
+          room_code: id 
+        });
+        
+        // HAPUS onStartGame() dari sini, biarkan useEffect Socket yang memindahkannya
+      }
+    } catch (error) {
+      console.error("Gagal menerima undangan:", error);
+    }
   };
 
-  const handleRejectInvite = (id) => {
-    setInvitations(invitations.filter((invite) => invite.id !== id));
+  const handleRejectInvite = async (id) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/invites/${id}/reject`, {
+        method: "PUT"
+      });
+      
+      if (response.ok) {
+        setInvitations(invitations.filter((invite) => invite.id !== id));
+      }
+    } catch (error) {
+      console.error("Gagal menolak undangan:", error);
+    }
   };
 
   return (

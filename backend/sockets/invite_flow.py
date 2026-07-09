@@ -3,6 +3,8 @@ import string
 from sockets import sio
 from sockets.state_manager import state
 
+from sockets.games.tictactoe import init_tictactoe
+
 def generate_room_code(length=4):
     """Menghasilkan 4 digit kode unik acak (misal: XY99)"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
@@ -52,10 +54,13 @@ async def join_room(sid, data):
     # Jika room sudah terisi 2 orang, mulai game!
     if len(room["players"]) == 2:
         room["status"] = "playing"
+        room["tictactoe"] = init_tictactoe(room["players"][0], room["players"][1]) # BUAT STATE GAME DI SINI
+        
         await sio.emit("game_start", {
             "message": "Lawan ditemukan! Game dimulai.",
             "room_code": room_code, 
-            "players": room["players"]
+            "players": room["players"],
+            "tictactoe_state": room["tictactoe"] # Kirim state awal ke frontend
         }, room=room_code)
         
     return {"status": "success", "room_code": room_code}
@@ -83,3 +88,27 @@ async def send_invite_realtime(sid, data):
     
     print(f"✉️ Invite real-time dikirim: {sender_username} -> {target_username} (Room: {room_code})")
     return {"status": "success", "message": "Undangan terkirim!"}
+
+@sio.on("trigger_game_start")
+async def trigger_game_start(sid, data):
+    """Menarik paksa kedua pemain ke dalam papan permainan"""
+    inviter = data.get("inviter") # Player 2 (yang ngirim)
+    invitee = data.get("invitee") # Player 1 (yang nerima)
+    room_code = data.get("room_code")
+    
+    # 1. Buat Room di memori server dan Inisialisasi Game TicTacToe
+    state.active_rooms[room_code] = {
+        "players": [inviter, invitee],
+        "status": "playing",
+        "tictactoe": init_tictactoe(inviter, invitee)
+    }
+    
+    # 2. Masukkan Player 1 (yang ngeklik Accept) ke Room
+    sio.enter_room(sid, room_code)
+    
+    # 3. Teriak pakai TOA ke seluruh server agar Player 2 dengar dan ikut masuk!
+    await sio.emit("teleport_to_game", {
+        "room_code": room_code,
+        "inviter": inviter,
+        "invitee": invitee
+    })

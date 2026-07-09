@@ -39,7 +39,7 @@ const handleSubmit = async (e) => {
 
   try {
     // Menggunakan URL statis Ngrok yang mengarah ke port 8000 (Tanpa tanda / di ujung)
-    const NGROK_BASE_URL = "https://electrocratic-debatable-joannie.ngrok-free.dev"; 
+    const NGROK_BASE_URL = "http://127.0.0.1:8000"; 
 
     const endpoint = authMode === "register"
       ? `${NGROK_BASE_URL}/auth/register`
