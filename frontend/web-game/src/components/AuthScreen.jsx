@@ -23,66 +23,64 @@ const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 const [error, setError] = useState('');
 
 const handleSubmit = async (e) => {
-e.preventDefault();
+  e.preventDefault();
 
-localStorage.setItem("token", "dummy-token");
-onAuthSuccess(username || "Player");
+  if (!username || !password || (authMode === "register" && !confirmPassword)) {
+    setError("FIELDS CANNOT BE EMPTY!");
+    return;
+  }
+
+  if (authMode === "register" && password !== confirmPassword) {
+    setError("PASSWORDS DO NOT MATCH!");
+    return;
+  }
+
+  setError("");
+
+  try {
+    // Menggunakan URL statis Ngrok yang mengarah ke port 8000 (Tanpa tanda / di ujung)
+    const NGROK_BASE_URL = "https://electrocratic-debatable-joannie.ngrok-free.dev"; 
+
+    const endpoint = authMode === "register"
+      ? `${NGROK_BASE_URL}/auth/register`
+      : `${NGROK_BASE_URL}/auth/login`;
+
+    const response = await fetch(endpoint, {  
+      method: "POST",  
+      headers: {  
+        "Content-Type": "application/json",
+        // Melewati halaman peringatan Ngrok agar request tidak diblokir
+        "ngrok-skip-browser-warning": "true",  
+      },  
+      body: JSON.stringify({  
+        username,  
+        password,  
+      }),  
+    });  
+
+    const data = await response.json();  
+
+    if (!response.ok) {  
+      if (Array.isArray(data.detail)) {
+        setError(data.detail[0].msg || "Terjadi kesalahan");
+      } else {
+        setError(data.detail || "Terjadi kesalahan");
+      }
+      return;
+    }  
+
+    if (authMode === "login") {  
+      localStorage.setItem("token", data.access_token);  
+    }  
+
+    onAuthSuccess(username);
+
+  } catch (err) {
+    console.error(err);
+    setError("Tidak dapat terhubung ke server");
+  }
 };
 
-/*
-const handleSubmit = async (e) => {
-e.preventDefault();
-
-if (!username || !password || (authMode === "register" && !confirmPassword)) {
-setError("FIELDS CANNOT BE EMPTY!");
-return;
-}
-
-if (authMode === "register" && password !== confirmPassword) {
-setError("PASSWORDS DO NOT MATCH!");
-return;
-}
-
-setError("");
-
-try {
-const endpoint =
-authMode === "register"
-// nanti diganti sesuai endpoint backend
-? "https://missed-share-constraints-voluntary.trycloudflare.com/auth/register"
-: "https://missed-share-constraints-voluntary.trycloudflare.com/auth/login";
-
-const response = await fetch(endpoint, {  
-  method: "POST",  
-  headers: {  
-    "Content-Type": "application/json",  
-  },  
-  body: JSON.stringify({  
-    username,  
-    password,  
-  }),  
-});  
-
-const data = await response.json();  
-
-if (!response.ok) {  
-  setError(data.detail || "Terjadi kesalahan");  
-  return;  
-}  
-
-// Kalau login, simpan JWT  
-if (authMode === "login") {  
-  localStorage.setItem("token", data.access_token);  
-}  
-
-onAuthSuccess(username);
-
-} catch (err) {
-console.error(err);
-setError("Tidak dapat terhubung ke server");
-}
-};
-*/
 return (
 <div className="screen-container start-screen-bg">
 <div className="crt-overlay"></div>
