@@ -28,7 +28,11 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     const fetchInvites = async () => {
       try {
         // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
-        const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${currentUser.toUpperCase()}`);
+        const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${currentUser.toUpperCase()}`, {
+          headers: {
+            "ngrok-skip-browser-warning": "true"
+          }
+        });
         if (response.ok) {
           const data = await response.json();
           // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
@@ -97,7 +101,8 @@ const handleInviteFriend = async (e, gameName) => {
       const response = await fetch("https://electrocratic-debatable-joannie.ngrok-free.dev/invites/", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning":"true"
         },
         body: JSON.stringify({
           from_user: currentUser,
