@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { socket } from '../socket';
 
-function ChatBox({ currentUser, gameRoomId }) {
+// 1. Tambahkan prop onSendMessage dan gameType di sini
+function ChatBox({ currentUser, gameRoomId, onSendMessage, gameType }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
@@ -9,7 +10,7 @@ function ChatBox({ currentUser, gameRoomId }) {
   useEffect(() => {
     // Ambil histori chat saat komponen pertama kali muncul
     socket.emit('get_chat_history', { room_code: gameRoomId }, (res) => {
-      if (res.status === 'success') {
+      if (res && res.status === 'success') {
         setMessages(res.history);
       }
     });
@@ -33,14 +34,31 @@ function ChatBox({ currentUser, gameRoomId }) {
     e.preventDefault();
     if (!inputText.trim()) return;
 
+    // 2. HUBUNGKAN KE GARTIC: Lempar teks ke fungsi checker di Gartic.jsx
+    if (onSendMessage) {
+      onSendMessage(inputText);
+    }
+
+    // Kirim ke backend melalui socket (untuk Tic Tac Toe & Gartic asli nanti)
     socket.emit('send_message', {
       room_code: gameRoomId,
       message: inputText
     }, (res) => {
-      if (res.status !== 'success') {
+      if (res && res.status !== 'success') {
         console.error('Gagal kirim pesan:', res.message);
       }
     });
+
+    // 🛠️ HACK KHUSUS LOCAL TESTING GARTIC:
+    // Karena backend Gartic belum ada untuk membalas 'receive_message',
+    // kita masukkan pesannya langsung ke layar secara lokal agar kamu bisa melihat tebakanmu sendiri.
+    if (gameType === 'GARTIC') {
+      const mockPayload = {
+        sender: currentUser,
+        message: inputText
+      };
+      setMessages((prev) => [...prev, mockPayload]);
+    }
 
     setInputText('');
   };
