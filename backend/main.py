@@ -14,6 +14,9 @@ import sockets.invite_flow
 
 # sockets/games
 import sockets.games.tictactoe
+from sockets.events_gartic import register_gartic_events
+
+register_gartic_events(sio)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
