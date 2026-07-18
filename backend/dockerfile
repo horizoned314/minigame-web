@@ -1,49 +1,19 @@
-# ---------------------------------------------------------
-# Stage 1: Builder
-# ---------------------------------------------------------
-FROM python:3.12-slim AS builder
+# Gunakan image Python yang ringan
+FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# Set working directory di dalam container
 WORKDIR /app
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Karena Dockerfile ada di dalam folder backend, requirements.txt langsung terbaca
+# Salin file requirement dan install dependensi
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# ---------------------------------------------------------
-# Stage 2: Runtime
-# ---------------------------------------------------------
-FROM python:3.12-slim AS runtime
-
-# Install runtime libraries only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-# Salin direktori virtual env dari stage builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Menyalin seluruh isi folder backend ke dalam WORKDIR (/app)
+# Salin seluruh kode proyek ke container
 COPY . .
 
-# Expose port
+# Expose port yang digunakan FastAPI/Uvicorn (misal: 8000)
 EXPOSE 8000
 
-# Jalankan menggunakan `sio_app` karena FastAPI sudah dibungkus Socket.IO
-# 'main' merujuk pada file main.py kamu yang sekarang berada di root /app
-CMD ["uvicorn", "main:sio_app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Perintah untuk menjalankan server menggunakan Uvicorn
+# --proxy-headers & --forwarded-allow-ips penting jika berada di belakang Reverse Proxy (CasaOS/Cloudflare)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
