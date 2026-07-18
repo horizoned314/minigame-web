@@ -39,19 +39,17 @@ const handleSubmit = async (e) => {
   setError("");
 
   try {
-    // Menggunakan URL statis Ngrok yang mengarah ke port 8000 (Tanpa tanda / di ujung)
-    const NGROK_BASE_URL = "https://electrocratic-debatable-joannie.ngrok-free.dev"; 
+    // Menggunakan URL statis api yang mengarah ke port 8001 (Tanpa tanda / di ujung)
+    const API_BASE_URL = "https://api.playgrounds.web.id"; 
 
     const endpoint = authMode === "register"
-      ? `${NGROK_BASE_URL}/auth/register`
-      : `${NGROK_BASE_URL}/auth/login`;
+      ? `${API_BASE_URL}/auth/register`
+      : `${API_BASE_URL}/auth/login`;
 
     const response = await fetch(endpoint, {  
       method: "POST",  
       headers: {  
         "Content-Type": "application/json",
-        // Melewati halaman peringatan Ngrok agar request tidak diblokir
-        "ngrok-skip-browser-warning": "true",  
       },  
       body: JSON.stringify({  
         username,  
@@ -75,11 +73,10 @@ let tokenData = data;
 
 if (authMode === "register") {
   // Register sukses tapi belum dapat token -> auto-login
-  const loginRes = await fetch(`${NGROK_BASE_URL}/auth/login`, {
+  const loginRes = await fetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true",
     },
     body: JSON.stringify({ username, password }),
   });
