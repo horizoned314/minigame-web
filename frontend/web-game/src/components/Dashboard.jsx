@@ -28,10 +28,7 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     const fetchInvites = async () => {
       try {
         // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
-        const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${currentUser.toUpperCase()}`, {
-          headers: {
-            "ngrok-skip-browser-warning": "true"
-          }
+        const response = await fetch(`https://api.playgrounds.web.id/invites/${currentUser.toUpperCase()}`, {
         });
         if (response.ok) {
           const data = await response.json();
@@ -98,11 +95,10 @@ const handleInviteFriend = async (e, gameName) => {
     const roomCode = res.room_code;
 
     try {
-      const response = await fetch("https://electrocratic-debatable-joannie.ngrok-free.dev/invites/", {
+      const response = await fetch("https://api.playgrounds.web.id/invites/", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "ngrok-skip-browser-warning":"true"
         },
         body: JSON.stringify({
           from_user: currentUser,
@@ -141,7 +137,7 @@ const handleInviteFriend = async (e, gameName) => {
   const handleAcceptInvite = async (inviteId, roomCode, inviter) => {
     try {
       const response = await fetch(
-        `https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${inviteId}/accept`,
+        `https://api.playgrounds.web.id/invites/${inviteId}/accept`,
         {
           method: "PUT"
         }
@@ -166,7 +162,7 @@ const handleInviteFriend = async (e, gameName) => {
 
   const handleRejectInvite = async (id) => {
     try {
-      const response = await fetch(`https://electrocratic-debatable-joannie.ngrok-free.dev/invites/${id}/reject`, {
+      const response = await fetch(`https://api.playgrounds.web.id/invites/${id}/reject`, {
         method: "PUT"
       });
       
