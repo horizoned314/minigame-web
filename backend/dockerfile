@@ -16,4 +16,4 @@ EXPOSE 8000
 
 # Perintah untuk menjalankan server menggunakan Uvicorn
 # --proxy-headers & --forwarded-allow-ips penting jika berada di belakang Reverse Proxy (CasaOS/Cloudflare)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "main:sio_app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers", "--forwarded-allow-ips", "*"]
