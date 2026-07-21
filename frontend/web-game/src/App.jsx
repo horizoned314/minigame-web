@@ -6,8 +6,10 @@ import AuthScreen from './components/AuthScreen';
 import Dashboard from './components/Dashboard';
 import TicTacToe from './components/TicTacToe';
 import Gartic from './components/Gartic';
+import Photobooth from './components/Photobooth';
 
 function App() {
+  // 1. DIKEMBALIKAN KE 'start' (Bukan 'photobooth' lagi)
   const [screen, setScreen] = useState('start'); 
   const [authMode, setAuthMode] = useState(''); 
   const [currentUser, setCurrentUser] = useState('');
@@ -16,21 +18,23 @@ function App() {
   const [roomCode, setRoomCode] = useState('');
   const [initialGameState, setInitialGameState] = useState(null);
 
-  // EFFECT SOCKET: Menangkap sinyal start game dari backend temenmu
+  // EFFECT SOCKET: Menangkap sinyal start game dari backend
   useEffect(() => {
     socket.on("game_start", (data) => {
       console.log("GAME START VIA SOCKET", data);
 
       setRoomCode(data.room_code);
 
-      const opp = data.players.find((p) => p !== currentUser) || "";
+      const opp = data.players?.find((p) => p !== currentUser) || "";
       setOpponent(opp);
 
-      // FITUR BARU: Cek kiriman jenis game dari backend temenmu (misal data.game atau data.game_type)
+      // Cek kiriman jenis game dari backend
       if (data.game === 'gartic' || data.game_type === 'gartic') {
         setScreen("gartic");
+      } else if (data.game === 'photobooth' || data.game_type === 'photobooth') {
+        setScreen("photobooth");
       } else {
-        setScreen("ttt"); // Default ke Tic Tac Toe jika tidak ada keterangan
+        setScreen("ttt"); // Default ke Tic Tac Toe
       }
     });
 
@@ -55,19 +59,21 @@ function App() {
   };
 
   const handleBackToMenu = () => {
+    setCurrentUser('');
     setScreen('start');
   };
 
-  // UPDATE FUNGSI: Menambahkan parameter gameType di akhir agar fleksibel
   const handleStartGame = (opponentName, currentRoomCode, gameState, gameType = 'ttt') => {
     setOpponent(opponentName);
     setRoomCode(currentRoomCode);
+    setInitialGameState(gameState);
     
     // Cek halaman mana yang harus dibuka
     if (gameType === 'gartic') {
       setScreen('gartic');
+    } else if (gameType === 'photobooth') {
+      setScreen('photobooth');
     } else {
-      setInitialGameState(gameState);
       setScreen('ttt');
     }
   };
@@ -112,11 +118,24 @@ function App() {
         />
       )}
 
-      {/* RENDER SCREEN GARTIC (BARU) */}
+      {/* RENDER SCREEN GARTIC */}
       {screen === 'gartic' && (
         <Gartic 
-          player1Name={currentUser || "PLAYER 1"} 
-          player2Name={opponent || "PLAYER 2"} 
+          currentUser={currentUser}
+          opponentName={opponent}
+          roomCode={roomCode}
+          initialGameState={initialGameState}
+          onBackToDashboard={handleBackToDashboard}
+        />
+      )}
+
+      {/* RENDER SCREEN PHOTOBOOTH */}
+      {screen === 'photobooth' && (
+        <Photobooth 
+          currentUser={currentUser} 
+          opponentName={opponent} 
+          roomCode={roomCode} 
+          initialGameState={initialGameState}
           onBackToDashboard={handleBackToDashboard}
         />
       )}
