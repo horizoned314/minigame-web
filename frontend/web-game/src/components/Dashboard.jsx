@@ -12,7 +12,6 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
   const minigames = [
     { id: 'ttt', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
     { id: 'gartic', name: 'GARTIC', desc: 'DRAW AND GUESS' },
-    { id: 'tod', name: 'TRUTH OR DARE', desc: 'CHOOSE YOUR FATE' },
     { id: 'photo', name: 'PHOTOBOOTH', desc: 'RETRO SNAPSHOT' }
   ];
 
