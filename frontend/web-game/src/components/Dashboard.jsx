@@ -7,12 +7,11 @@ const MailIcon = () => (
   </svg>
 );
 
-// Tambahkan onStartGame di baris props bawah ini
 function Dashboard({ currentUser, onLogout, onStartGame }) {
   const minigames = [
-    { id: 'ttt', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
+    { id: 'tictactoe', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
     { id: 'gartic', name: 'GARTIC', desc: 'DRAW AND GUESS' },
-    { id: 'photo', name: 'PHOTOBOOTH', desc: 'RETRO SNAPSHOT' }
+    { id: 'photobooth', name: 'PHOTOBOOTH', desc: 'RETRO SNAPSHOT' }
   ];
 
   const [activeInviteInput, setActiveInviteInput] = useState(null);
@@ -26,12 +25,10 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
   useEffect(() => {
     const fetchInvites = async () => {
       try {
-        // Asumsi currentUser adalah username yang sedang login (misal: "ruuna")
         const response = await fetch(`https://api.playgrounds.web.id/invites/${currentUser.toUpperCase()}`, {
         });
         if (response.ok) {
           const data = await response.json();
-          // Backend mengembalikan format camelCase/snake_case, kita sesuaikan
           const formattedData = data.map(inv => ({
             id: inv.id,
             roomCode: inv.room_code,
@@ -47,7 +44,6 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
 
     fetchInvites();
     
-    // Polling: Cek pesan baru setiap 5 detik
     const interval = setInterval(fetchInvites, 5000);
     return () => clearInterval(interval);
   }, [currentUser]);
@@ -57,76 +53,74 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
       console.log("[SOCKET] trigger_game_start diterima:", payload);
       setIsWaiting(false);
       
-      // 1. Ambil nama musuh dari array players (Cari yang namanya BUKAN nama kita)
-      // Array players dari backend bentuknya seperti: ["RUUNA", "RAFIF"]
       const opponentString = payload.players.find(
         (p) => p.toUpperCase() !== currentUser.toUpperCase()
       ) || "OPPONENT";
 
-      // 2. Oper data sesuai permintaan App.jsx (Parameter 1: Nama Musuh, Parameter 2: Kode Room)
-      onStartGame(opponentString, payload.room_code, payload.tictactoe_state); 
+      const gameType = payload.game_type || "tictactoe";
+      const gameState = payload[`${gameType}_state`] || {};
+
+      onStartGame(opponentString, payload.room_code, gameType, gameState); 
     }
 
     socket.on("trigger_game_start", handleGameStart);
     return () => socket.off("trigger_game_start", handleGameStart);
   }, [currentUser, onStartGame]);
 
-const handleInviteFriend = async (e, gameName) => {
-  e.preventDefault();
+  const handleInviteFriend = async (e, gameName, gameId) => {
+    e.preventDefault();
 
-  if (!friendName.trim()) {
-    alert("ENTER A VALID USERNAME!");
-    return;
-  }
-
-  const cleanName = friendName.toUpperCase();
-
-  setTargetFriend(cleanName);
-  setIsWaiting(true);
-
-  socket.emit("create_room", null, async (res) => {
-    if (res.status !== "success") {
-      alert(res.message);
-      setIsWaiting(false);
+    if (!friendName.trim()) {
+      alert("ENTER A VALID USERNAME!");
       return;
     }
 
-    const roomCode = res.room_code;
+    const cleanName = friendName.toUpperCase();
 
-    try {
-      const response = await fetch("https://api.playgrounds.web.id/invites/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from_user: currentUser,
-          to_user: cleanName,
-          game_name: gameName,
+    setTargetFriend(cleanName);
+    setIsWaiting(true);
 
-          // <-- nanti backend harus menerima ini
-          room_code: roomCode
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        alert(data.detail || "ERROR");
+    socket.emit("create_room", { game_type: gameId }, async (res) => {
+      if (res.status !== "success") {
+        alert(res.message);
         setIsWaiting(false);
         return;
       }
 
-      alert(`INVITATION SENT TO [${cleanName}]!`);
+      const roomCode = res.room_code;
 
-      setFriendName("");
-      setActiveInviteInput(null);
+      try {
+        const response = await fetch("https://api.playgrounds.web.id/invites/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from_user: currentUser,
+            to_user: cleanName,
+            game_name: gameName,
+            room_code: roomCode
+          })
+        });
 
-    } catch (err) {
-      console.error(err);
-    }
-  });
-};
+        const data = await response.json();
+
+        if (!response.ok) {
+          alert(data.detail || "ERROR");
+          setIsWaiting(false);
+          return;
+        }
+
+        alert(`INVITATION SENT TO [${cleanName}]!`);
+
+        setFriendName("");
+        setActiveInviteInput(null);
+
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  };
 
   const handleCancelInvite = () => {
     setIsWaiting(false);
@@ -156,7 +150,7 @@ const handleInviteFriend = async (e, gameName) => {
 
     } catch (err) {
       console.error(err);
-      }
+    }
   };
 
   const handleRejectInvite = async (id) => {
@@ -272,7 +266,7 @@ const handleInviteFriend = async (e, gameName) => {
                     </button>
                   </div>
                 ) : (
-                  <form onSubmit={(e) => handleInviteFriend(e, game.name)} className="friend-input-form">
+                  <form onSubmit={(e) => handleInviteFriend(e, game.name, game.id)} className="friend-input-form">
                     <input 
                       type="text" 
                       className="friend-retro-input"
