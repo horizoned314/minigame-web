@@ -15,8 +15,10 @@ import sockets.invite_flow
 # sockets/games
 import sockets.games.tictactoe
 from sockets.events_gartic import register_gartic_events
+from sockets.events_photobooth import register_photobooth_events # Duplikasi import gartic dihapus
 
 register_gartic_events(sio)
+register_photobooth_events(sio)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -27,13 +29,11 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    #allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- TAMBAHKAN BARIS INI UNTUK MENDAFTARKAN ROUTER ---
 app.include_router(auth.router)
 app.include_router(invites.router)
 
@@ -46,5 +46,5 @@ async def root():
     }
 
 # --- BUNGKUS FASTAPI DENGAN SOCKET.IO ---
-# Variabel `sio_app` ini yang akan dieksekusi oleh Uvicorn
+# Variabel `sio_app` ini yang akan dieksekusi oleh Uvicorn di Dockerfile
 sio_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)

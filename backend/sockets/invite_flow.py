@@ -79,7 +79,16 @@ async def join_room(sid, data):
         if game_type == "tictactoe":
             room["tictactoe"] = init_tictactoe(room["players"][0], room["players"][1])
             payload["tictactoe_state"] = room["tictactoe"]
-        # Jika gartic, tidak dikirim state awal di sini (React akan memanggil init_gartic_game terpisah)
+            
+        elif game_type == "photobooth":
+            # Import di dalam fungsi untuk mencegah circular import error
+            from sockets.games.photobooth import PhotoboothRoom
+            from sockets.events_photobooth import active_photobooths
+            
+            # Init langsung saat join
+            game = PhotoboothRoom(room_code, room["players"][0], room["players"][1], sio)
+            active_photobooths[room_code] = game
+            payload["photobooth_state"] = game.get_state()
         
         await sio.emit("trigger_game_start", payload, room=room_code)
         
