@@ -3,8 +3,15 @@ import ChatBox from './ChatBox';
 import { socket } from '../socket';
 
 function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
-  const player1Name = currentUser || "P1";
-  const player2Name = opponentName || "P2";
+  // 1. DETERMINASI ROLE P1 DAN P2 SECARA KONSISTEN DI KEDUA LAPTOP
+  const p1Determined = initialGameState?.p1_name || initialGameState?.p1 || 
+    (currentUser && opponentName ? (currentUser < opponentName ? currentUser : opponentName) : currentUser);
+
+  const player1Name = p1Determined || "P1";
+  const player2Name = (player1Name === currentUser ? opponentName : currentUser) || "P2";
+
+  const isP1 = currentUser === player1Name;
+  const myRole = isP1 ? 'p1' : 'p2';
 
   // STATE PENJAGA SPAM KLIK
   const [localReadySent, setLocalReadySent] = useState(false);
@@ -26,28 +33,37 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
   const [customWordInput, setCustomWordInput] = useState('');
   const [hasGuessedCorrectly, setHasGuessedCorrectly] = useState(initialGameState?.has_guessed || false);
 
+  // LOGIKA PEMILIHAN DRAWER BERDASARKAN ROLE KONSISTEN
   const drawerId = round % 2 !== 0 ? 'p1' : 'p2';
   const drawerName = drawerId === 'p1' ? player1Name : player2Name;
-
   const isMeDrawer = currentUser === drawerName;
-  const isMeReady = readyPlayers.includes(currentUser) || (currentUser === player1Name ? p1Ready : p2Ready);
+
+  const isMeReady = readyPlayers.includes(currentUser) || (isP1 ? p1Ready : p2Ready);
   const readyCount = readyPlayers.length > 0 ? readyPlayers.length : ((p1Ready ? 1 : 0) + (p2Ready ? 1 : 0));
 
-  // CANVAS SETTINGS
+  // CANVAS SETTINGS & REFS
   const canvasRef = useRef(null);
   const isDrawingRef = useRef(false);
   const [currentColor, setCurrentColor] = useState('#4CC9F0'); 
   const [brushSize, setBrushSize] = useState(5);
 
+  // RESET KANVAS OTOMATIS SAAT GANTI RONDE / PHASE SETUP
+  useEffect(() => {
+    if (phase === 'setup' || phase === 'drawing') {
+      clearCanvasLocal();
+    }
+  }, [round, phase]);
+
+  // SOCKET LISTENERS
   useEffect(() => {
     socket.on('gartic_update', (gameState) => {
       console.log("📥 [GARTIC UPDATE DARI SERVER]:", gameState);
-      setRound(gameState.round);
-      setPhase(gameState.phase);
-      setTimer(gameState.timer);
-      setIsGameOver(gameState.is_game_over);
-      setSecretWord(gameState.secret_word || '');
-      setHasGuessedCorrectly(gameState.has_guessed || false);
+      if (gameState.round !== undefined) setRound(gameState.round);
+      if (gameState.phase) setPhase(gameState.phase);
+      if (gameState.timer !== undefined) setTimer(gameState.timer);
+      if (gameState.is_game_over !== undefined) setIsGameOver(gameState.is_game_over);
+      if (gameState.secret_word !== undefined) setSecretWord(gameState.secret_word || '');
+      if (gameState.has_guessed !== undefined) setHasGuessedCorrectly(gameState.has_guessed || false);
       
       if (gameState.scores) setScores(gameState.scores);
       if (gameState.ready_players) setReadyPlayers(gameState.ready_players);
@@ -60,10 +76,11 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     });
 
     socket.on('gartic_draw_receive', (data) => {
-      if (isMeDrawer) return;
+      if (isMeDrawer) return; // Penggambar tidak perlu menggambar ulang apa yang dikirim sendiri
       
-      const ctx = canvasRef.current?.getContext('2d');
-      if (!ctx) return;
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!ctx || !canvas) return;
 
       if (data.type === 'start') {
         ctx.beginPath();
@@ -73,11 +90,12 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
         ctx.strokeStyle = data.color;
         ctx.lineWidth = data.size;
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.stroke();
       } else if (data.type === 'stop') {
         ctx.closePath();
       } else if (data.type === 'clear') {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
     });
 
@@ -87,6 +105,7 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     };
   }, [isMeDrawer]);
 
+  // TIMER COUNTDOWN LOKAL
   useEffect(() => {
     let countdownInterval = null;
     if (timer > 0 && (phase === 'drawing' || phase === 'guessing' || phase === 'round_over')) {
@@ -97,34 +116,78 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     return () => clearInterval(countdownInterval);
   }, [phase, timer]);
 
-  const startDrawing = ({ nativeEvent }) => {
-    if (!isMeDrawer || phase !== 'drawing') return;
-    const { offsetX, offsetY } = nativeEvent;
-    const ctx = canvasRef.current.getContext('2d');
-    ctx.beginPath();
-    ctx.moveTo(offsetX, offsetY);
-    isDrawingRef.current = true;
+  // HELPER UNTUK MENDAPATKAN KOORDINAT PRESISI KANVAS TERKECUALI CSS SCALING
+  const getCanvasCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
 
-    socket.emit('gartic_draw', { room_code: roomCode, x: offsetX, y: offsetY, type: 'start', color: currentColor, size: brushSize });
+    const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
   };
 
-  const draw = ({ nativeEvent }) => {
-    if (!isDrawingRef.current || !isMeDrawer) return;
-    const { offsetX, offsetY } = nativeEvent;
+  // HANDLER MENGGAMBAR
+  const startDrawing = (e) => {
+    if (!isMeDrawer || phase !== 'drawing') return;
+    const { x, y } = getCanvasCoordinates(e);
     const ctx = canvasRef.current.getContext('2d');
-    ctx.lineTo(offsetX, offsetY);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    isDrawingRef.current = true;
+
+    socket.emit('gartic_draw', { 
+      room_code: roomCode, 
+      x, 
+      y, 
+      type: 'start', 
+      color: currentColor, 
+      size: brushSize,
+      sender: currentUser,
+      role: myRole
+    });
+  };
+
+  const draw = (e) => {
+    if (!isDrawingRef.current || !isMeDrawer || phase !== 'drawing') return;
+    const { x, y } = getCanvasCoordinates(e);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineTo(x, y);
     ctx.strokeStyle = currentColor;
     ctx.lineWidth = brushSize;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.stroke();
 
-    socket.emit('gartic_draw', { room_code: roomCode, x: offsetX, y: offsetY, type: 'draw', color: currentColor, size: brushSize });
+    socket.emit('gartic_draw', { 
+      room_code: roomCode, 
+      x, 
+      y, 
+      type: 'draw', 
+      color: currentColor, 
+      size: brushSize,
+      sender: currentUser,
+      role: myRole
+    });
   };
 
   const stopDrawing = () => { 
     if (isDrawingRef.current && isMeDrawer) {
       isDrawingRef.current = false;
-      socket.emit('gartic_draw', { room_code: roomCode, type: 'stop' });
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) ctx.closePath();
+      socket.emit('gartic_draw', { 
+        room_code: roomCode, 
+        type: 'stop',
+        sender: currentUser,
+        role: myRole
+      });
     }
   };
   
@@ -139,7 +202,12 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
   const handleClearCanvasAction = () => {
     if (!isMeDrawer) return;
     clearCanvasLocal();
-    socket.emit('gartic_draw', { room_code: roomCode, type: 'clear' });
+    socket.emit('gartic_draw', { 
+      room_code: roomCode, 
+      type: 'clear',
+      sender: currentUser,
+      role: myRole
+    });
   };
 
   const handleSetupCustomWord = (e) => {
@@ -149,7 +217,9 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     socket.emit('gartic_action', {
       room_code: roomCode,
       action: 'set_custom_word',
-      word: customWordInput.toUpperCase().trim()
+      word: customWordInput.toUpperCase().trim(),
+      sender: currentUser,
+      role: myRole
     });
     setCustomWordInput('');
   };
@@ -158,7 +228,8 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     socket.emit('gartic_guess', {
       room_code: roomCode,
       sender: currentUser,
-      message: text
+      message: text,
+      role: myRole
     });
   };
 
@@ -172,10 +243,16 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     if (localReadySent) return;
     setLocalReadySent(true);
 
+    // Optimistic Update lokal
+    if (isP1) setP1Ready(true);
+    else setP2Ready(true);
+
     console.log("🚀 MENGIRIM KESIAPAN DATA TUTORIAL GARTIC KE SERVER...");
     socket.emit('gartic_action', { 
       room_code: roomCode, 
-      action: 'ready' 
+      action: 'ready',
+      sender: currentUser,
+      role: myRole
     });
   };
 
@@ -241,13 +318,13 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
 
           <div className="gartic-status-bar">
             {phase === 'setup' && (
-              <p className="status-text blink-text">WAITING FOR {drawerName} TO CHOOSE A WORD...</p>
+              <p className="status-text blink-text">WAITING FOR {drawerName.toUpperCase()} TO CHOOSE A WORD...</p>
             )}
             {phase === 'drawing' && (
               <p className="status-text" style={{ color: 'var(--color-cyan)' }}>
                 {isMeDrawer 
                   ? `YOUR TURN TO DRAW! KATA: ${secretWord}` 
-                  : `${drawerName} IS DRAWING... PREPARE YOURSELF!`
+                  : `${drawerName.toUpperCase()} IS DRAWING... PREPARE YOURSELF!`
                 }
               </p>
             )}
@@ -308,11 +385,12 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
                     ref={canvasRef}
                     width={500}
                     height={320}
-                    className={`gartic-canvas ${phase !== 'drawing' ? 'canvas-locked' : ''}`}
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
+                    className={`gartic-canvas ${phase !== 'drawing' || !isMeDrawer ? 'canvas-locked' : ''}`}
+                    onPointerDown={startDrawing}
+                    onPointerMove={draw}
+                    onPointerUp={stopDrawing}
+                    onPointerLeave={stopDrawing}
+                    style={{ touchAction: 'none' }}
                   />
                 )}
               </>
