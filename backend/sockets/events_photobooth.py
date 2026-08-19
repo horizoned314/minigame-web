@@ -38,6 +38,25 @@ def register_photobooth_events(sio):
         elif action in ['retake_current_shot', 'next_shot', 'retake_all']:
             await game.sync_action(action)
 
+    # === WEBRTC SIGNALING EVENTS ===
+    @sio.on("webrtc_offer")
+    async def handle_webrtc_offer(sid, data):
+        room_code = data.get("room_code")
+        if room_code:
+            await sio.emit("webrtc_offer", data, room=room_code, skip_sid=sid)
+
+    @sio.on("webrtc_answer")
+    async def handle_webrtc_answer(sid, data):
+        room_code = data.get("room_code")
+        if room_code:
+            await sio.emit("webrtc_answer", data, room=room_code, skip_sid=sid)
+
+    @sio.on("webrtc_ice_candidate")
+    async def handle_webrtc_ice(sid, data):
+        room_code = data.get("room_code")
+        if room_code:
+            await sio.emit("webrtc_ice_candidate", data, room=room_code, skip_sid=sid)
+
     @sio.on("disconnect")
     async def on_photobooth_disconnect(sid):
         raw_user = state.active_sockets.get(sid)
