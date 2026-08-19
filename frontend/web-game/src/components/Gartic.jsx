@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ChatBox from './ChatBox';
-import { socket } from '../socket'; // Menggunakan socket yang sama dengan TicTacToe
+import { socket } from '../socket';
 
 function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
-  // SINKRONISASI NAMA PLAYER SESUAI KONDISI LOBBY MULTIPLAYER
   const player1Name = currentUser || "P1";
   const player2Name = opponentName || "P2";
 
-  // GAME STATE UTAMA (Sinkronisasi awal dari data backend)
+  // STATE PENJAGA SPAM KLIK
+  const [localReadySent, setLocalReadySent] = useState(false);
+
+  // GAME STATE UTAMA
   const [round, setRound] = useState(initialGameState?.round || 1);
   const [scores, setScores] = useState(initialGameState?.scores || { p1: 0, p2: 0 });
   const [phase, setPhase] = useState(initialGameState?.phase || 'tutorial'); 
   const [isGameOver, setIsGameOver] = useState(initialGameState?.is_game_over || false);
   const [timer, setTimer] = useState(initialGameState?.timer || 0); 
 
-  // STATE KESIAPAN TUTORIAL (Ikut standarisasi backend)
+  // STATE KESIAPAN TUTORIAL
   const [readyPlayers, setReadyPlayers] = useState(initialGameState?.ready_players || []);
   const [p1Ready, setP1Ready] = useState(initialGameState?.p1_ready || false);
   const [p2Ready, setP2Ready] = useState(initialGameState?.p2_ready || false);
@@ -24,10 +26,8 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
   const [customWordInput, setCustomWordInput] = useState('');
   const [hasGuessedCorrectly, setHasGuessedCorrectly] = useState(initialGameState?.has_guessed || false);
 
-  // LOGIKA MENENTUKAN SIAPA YANG MENGGAMBAR
   const drawerId = round % 2 !== 0 ? 'p1' : 'p2';
   const drawerName = drawerId === 'p1' ? player1Name : player2Name;
-  const guesserName = drawerId === 'p1' ? player2Name : player1Name;
 
   const isMeDrawer = currentUser === drawerName;
   const isMeReady = readyPlayers.includes(currentUser) || (currentUser === player1Name ? p1Ready : p2Ready);
@@ -39,11 +39,7 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
   const [currentColor, setCurrentColor] = useState('#4CC9F0'); 
   const [brushSize, setBrushSize] = useState(5);
 
-  // ==========================================
-  // JALUR PIPA UTAMA: DENGARKAN TELEMETRI SERVER
-  // ==========================================
   useEffect(() => {
-    // 1. Update State Game Secara Umum
     socket.on('gartic_update', (gameState) => {
       console.log("📥 [GARTIC UPDATE DARI SERVER]:", gameState);
       setRound(gameState.round);
@@ -58,15 +54,13 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
       if (gameState.p1_ready !== undefined) setP1Ready(gameState.p1_ready);
       if (gameState.p2_ready !== undefined) setP2Ready(gameState.p2_ready);
 
-      // Reset kanvas lokal setiap kali ronde atau fase berganti demi kebersihan layar
       if (gameState.should_clear_canvas) {
         clearCanvasLocal();
       }
     });
 
-    // 2. Terima Koordinat Gambar Real-time dari Lawan
     socket.on('gartic_draw_receive', (data) => {
-      if (isMeDrawer) return; // Pelukis asli tidak perlu menggambar ulang jejaknya sendiri
+      if (isMeDrawer) return;
       
       const ctx = canvasRef.current?.getContext('2d');
       if (!ctx) return;
@@ -93,7 +87,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     };
   }, [isMeDrawer]);
 
-  // LOCAL COUNTDOWN TIMER (Sebagai kompensasi latency jaringan agar visual tetap mulus)
   useEffect(() => {
     let countdownInterval = null;
     if (timer > 0 && (phase === 'drawing' || phase === 'guessing' || phase === 'round_over')) {
@@ -104,9 +97,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     return () => clearInterval(countdownInterval);
   }, [phase, timer]);
 
-  // ==========================================
-  // CORE CANVAS LOGIC WITH SOCKET EMITTERS
-  // ==========================================
   const startDrawing = ({ nativeEvent }) => {
     if (!isMeDrawer || phase !== 'drawing') return;
     const { offsetX, offsetY } = nativeEvent;
@@ -115,7 +105,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     ctx.moveTo(offsetX, offsetY);
     isDrawingRef.current = true;
 
-    // Kirim sinyal mulai menarik garis ke backend
     socket.emit('gartic_draw', { room_code: roomCode, x: offsetX, y: offsetY, type: 'start', color: currentColor, size: brushSize });
   };
 
@@ -129,7 +118,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     ctx.lineCap = 'round';
     ctx.stroke();
 
-    // Kirim koordinat lintasan kontinu ke backend
     socket.emit('gartic_draw', { room_code: roomCode, x: offsetX, y: offsetY, type: 'draw', color: currentColor, size: brushSize });
   };
 
@@ -154,12 +142,10 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     socket.emit('gartic_draw', { room_code: roomCode, type: 'clear' });
   };
 
-  // KIRIM PILIHAN KATA MANUAL KE SERVER (RONDE 3 & 4)
   const handleSetupCustomWord = (e) => {
     e.preventDefault();
     if (!customWordInput.trim()) return;
     
-    console.log("🚀 MENGIRIM KATA RAHASIA PILIHAN KE SERVER...");
     socket.emit('gartic_action', {
       room_code: roomCode,
       action: 'set_custom_word',
@@ -168,9 +154,7 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     setCustomWordInput('');
   };
 
-  // MANIFESTASI WHATSAPP CHATBOX KE SERVER
   const handleChatSendMessage = (text) => {
-    // Logic pencocokan dialihkan penuh ke backend untuk mencegah hacking inspect element F12
     socket.emit('gartic_guess', {
       room_code: roomCode,
       sender: currentUser,
@@ -184,8 +168,10 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     return secretWord.split('').map(() => '_ ').join('');
   };
 
-  // KIRIM SINYAL SIAP UNTUK MEMULAI DARI POP-UP
   const handleConfirmTutorial = () => {
+    if (localReadySent) return;
+    setLocalReadySent(true);
+
     console.log("🚀 MENGIRIM KESIAPAN DATA TUTORIAL GARTIC KE SERVER...");
     socket.emit('gartic_action', { 
       room_code: roomCode, 
@@ -197,7 +183,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     <div className="screen-container start-screen-bg gartic-layout">
       <div className="crt-overlay"></div>
 
-      {/* POP-UP HOW TO PLAY */}
       {phase === 'tutorial' && (
         <div className="game-over-overlay">
           <div className="game-over-box tutorial-box" style={{ maxWidth: '450px' }}>
@@ -218,10 +203,10 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
               <button 
                 className="ttt-action-btn next-btn" 
                 onClick={handleConfirmTutorial}
-                disabled={isMeReady}
-                style={{ opacity: isMeReady ? 0.5 : 1 }}
+                disabled={localReadySent || isMeReady}
+                style={{ opacity: (localReadySent || isMeReady) ? 0.5 : 1 }}
               >
-                {isMeReady ? `[ WAITING ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
+                {(localReadySent || isMeReady) ? `[ WAITING ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
               </button>
             </div>
           </div>
@@ -229,8 +214,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
       )}
 
       <div className="game-match-wrapper">
-        
-        {/* SISI KIRI: Monitor Utama */}
         <div className="gartic-container-box">
           <header className="gartic-header">
             <div className="gartic-score">
@@ -286,7 +269,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
             )}
           </div>
 
-          {/* AREA WORK KANVAS */}
           <div className="canvas-work-area">
             {phase === 'setup' ? (
               <div className="custom-word-setup-zone">
@@ -337,7 +319,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
             )}
           </div>
 
-          {/* TOOLBAR WARNA */}
           {phase === 'drawing' && isMeDrawer && (
             <div className="canvas-tools-bar">
               <div className="color-pickers">
@@ -354,7 +335,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
             </div>
           )}
 
-          {/* AKSI LANJUTAN */}
           <div className="gartic-bottom-controls">
             {isGameOver && (
               <div className="game-over-overlay">
@@ -371,9 +351,7 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
           </div>
         </div>
 
-        {/* SISI KANAN: ChatBox Terintegrasi dengan RoomCode Real */}
         <ChatBox currentUser={currentUser} gameRoomId={roomCode} onSendMessage={handleChatSendMessage} gameType="GARTIC" />
-
       </div>
     </div>
   );
