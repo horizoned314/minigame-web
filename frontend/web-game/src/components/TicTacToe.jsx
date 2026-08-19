@@ -2,17 +2,21 @@ import React, { useState, useEffect } from 'react';
 import ChatBox from './ChatBox';
 import { socket } from '../socket'; 
 
-// 1. TAMBAHKAN initialGameState DI PROPS
 function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
   
   // ==========================================
-  // STORES JALUR BACKEND UNTUK TUTORIAL READY
+  // STATE LOKAL & SINKRONISASI TUTORIAL
   // ==========================================
+  // TAMBAHAN: State penjaga agar tombol cuma bisa diklik sekali
+  const [localReadySent, setLocalReadySent] = useState(false);
+  
+  // TAMBAHAN: State untuk kontrol modal tutorial, cek apakah dari awal sudah selesai
+  const [showTutorial, setShowTutorial] = useState(initialGameState?.tutorial_finished === undefined ? true : !initialGameState.tutorial_finished);
+
   const [readyPlayers, setReadyPlayers] = useState(initialGameState?.ready_players || []);
   const [p1Ready, setP1Ready] = useState(initialGameState?.p1_ready || false);
   const [p2Ready, setP2Ready] = useState(initialGameState?.p2_ready || false);
 
-  // 2. GUNAKAN initialGameState SEBAGAI INGATAN AWAL AGAR TIDAK AMNESIA
   const [board, setBoard] = useState(initialGameState?.board || Array(9).fill(null));
   const [playerX, setPlayerX] = useState(initialGameState?.player_x || null);
   const [playerO, setPlayerO] = useState(initialGameState?.player_o || null);
@@ -26,13 +30,11 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
   const player1Name = currentUser || "P1";
   const player2Name = opponentName || "P2";
 
-  // HITUNG STATUS KESIAPAN KOMPATIBEL DENGAN FORMAT BACKEND MANA PUN
+  // Hitungan visual untuk di tombol (berapa orang yang udah ready)
   const isMeReady = readyPlayers.includes(currentUser) || (currentUser === player1Name ? p1Ready : p2Ready);
   const readyCount = readyPlayers.length > 0 ? readyPlayers.length : ((p1Ready ? 1 : 0) + (p2Ready ? 1 : 0));
-  const showTutorial = readyCount < 2;
 
   useEffect(() => {
-    // Sinkronisasi skor awal jika ada data dari backend
     if (initialGameState?.scores) {
       setScores({
         p1: initialGameState.scores[player1Name] || initialGameState.scores[player1Name.toLowerCase()] || 0,
@@ -40,11 +42,14 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
       });
     }
 
-    // Dengarkan update selanjutnya dari server
     socket.on('tictactoe_update', (gameState) => {
       console.log("📥 [UPDATE DARI SERVER]:", gameState);
       
-      // Update status tutorial dari backend agar tidak desinkronisasi
+      // TAMBAHAN: Tutup tutorial kalau backend bilang sudah selesai
+      if (gameState.tutorial_finished) {
+        setShowTutorial(false);
+      }
+
       if (gameState.ready_players) setReadyPlayers(gameState.ready_players);
       if (gameState.p1_ready !== undefined) setP1Ready(gameState.p1_ready);
       if (gameState.p2_ready !== undefined) setP2Ready(gameState.p2_ready);
@@ -72,35 +77,27 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
   }, [player1Name, player2Name, initialGameState]);
 
   const handleCellClick = (index) => {
-    // FUNGSI DETEKTIF: Akan muncul di F12 setiap kali Anda klik
     console.log(`\n--- KLIK KOTAK ${index} ---`);
     console.log(`Giliran Server: ${currentTurn} | Nama Saya: ${currentUser}`);
 
     const safeTurn = (currentTurn || "").toUpperCase();
     const safeMe = (currentUser || "").toUpperCase();
 
-    if (board[index]) {
-      console.log("❌ BLOKIR: Kotak sudah terisi.");
-      return;
-    }
-    if (roundWinner || isGameOver) {
-      console.log("❌ BLOKIR: Ronde/Game sudah selesai.");
-      return;
-    }
-    if (safeTurn !== safeMe) {
-      console.log("❌ BLOKIR: Bukan giliranmu!");
-      return;
-    }
+    if (board[index]) return;
+    if (roundWinner || isGameOver) return;
+    if (safeTurn !== safeMe) return;
 
-    console.log("✅ KLIK SAH! Mengirim tictactoe_move...");
     socket.emit('tictactoe_move', {
       room_code: roomCode,
       index: index
     });
   };
 
-  // EMIT UNTUK TUTORIAL (Ikut struktur kiriman aksi kawan backend kita)
   const handleConfirmTutorial = () => {
+    // TAMBAHAN: Cegah pengiriman berulang kalau tombol dispam
+    if (localReadySent) return; 
+    setLocalReadySent(true);
+    
     console.log("🚀 MENGIRIM KESIAPAN TUTORIAL KE BACKEND...");
     socket.emit('tictactoe_action', { 
       room_code: roomCode, 
@@ -109,13 +106,16 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
   };
 
   const handleNextAction = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'next_round' });
-  const handleResetGame = () => socket.emit('tictactoe_action', { room_code: roomCode, action: 'rematch' });
+  const handleResetGame = () => {
+    setLocalReadySent(false); // Reset state penjaga kalau rematch
+    socket.emit('tictactoe_action', { room_code: roomCode, action: 'rematch' });
+  };
 
   return (
     <div className="screen-container start-screen-bg ttt-layout">
       <div className="crt-overlay"></div>
 
-      {/* POP-UP HOW TO PLAY - DIKENDALIKAN OLEH STATE SERVER */}
+      {/* POP-UP HOW TO PLAY */}
       {showTutorial && (
         <div className="game-over-overlay">
           <div className="game-over-box tutorial-box" style={{ maxWidth: '450px' }}>
@@ -135,10 +135,10 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
               <button 
                 className="ttt-action-btn next-btn" 
                 onClick={handleConfirmTutorial}
-                disabled={isMeReady}
-                style={{ opacity: isMeReady ? 0.5 : 1 }}
+                disabled={localReadySent || isMeReady}
+                style={{ opacity: (localReadySent || isMeReady) ? 0.5 : 1 }}
               >
-                {isMeReady ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
+                {(localReadySent || isMeReady) ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
               </button>
             </div>
           </div>
