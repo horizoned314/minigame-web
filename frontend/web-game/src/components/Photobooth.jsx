@@ -10,10 +10,13 @@ const FRAME_OPTIONS = [
 ];
 
 function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
-  const player1Name = currentUser || "Salsabila";
-  const player2Name = opponentName || "Teman";
+  // DETEKSI ROLE CLIENT SAAT INI ('p1' ATAU 'p2') SECARA KONSISTEN DI KEDUA PEMAIN
+  const p1Determined = initialGameState?.p1_name || initialGameState?.p1 || 
+    (currentUser && opponentName ? (currentUser < opponentName ? currentUser : opponentName) : currentUser);
 
-  // DETEKSI ROLE CLIENT SAAT INI ('p1' ATAU 'p2')
+  const player1Name = p1Determined || "Player 1";
+  const player2Name = (player1Name === currentUser ? opponentName : currentUser) || "Player 2";
+
   const isP1 = currentUser === player1Name;
   const myRole = isP1 ? 'p1' : 'p2';
 
@@ -55,9 +58,9 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       if (data.phase) setPhase(data.phase);
       if (data.p1_ready !== undefined) setP1Ready(data.p1_ready);
       if (data.p2_ready !== undefined) setP2Ready(data.p2_ready);
-      if (data.proposed_frame) setProposedFrame(data.proposed_frame);
-      if (data.proposed_by) setProposedBy(data.proposed_by);
-      if (data.selected_frame) setSelectedFrame(data.selected_frame);
+      if (data.proposed_frame !== undefined) setProposedFrame(data.proposed_frame);
+      if (data.proposed_by !== undefined) setProposedBy(data.proposed_by);
+      if (data.selected_frame !== undefined) setSelectedFrame(data.selected_frame);
       
       if (data.action === 'retake_current_shot') {
         handleLocalRetakeCurrentShot();
@@ -117,7 +120,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     }
   }, [phase, cameraActive, shootingSubPhase]);
 
-  // 3. LOGIKA TRANSISI TUTORIAL -> FRAME SELECT
+  // 3. LOGIKA TRANSISI TUTORIAL -> FRAME SELECT (LOKAL & FALLBACK)
   useEffect(() => {
     if (phase === 'tutorial' && p1Ready && p2Ready) {
       setPhase('frame_select');
@@ -206,7 +209,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
 
   const triggerRetakeCurrentShot = () => {
     handleLocalRetakeCurrentShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
+    socket.emit('photobooth_action', { 
+      room_code: roomCode, 
+      action: 'retake_current_shot',
+      sender: currentUser,
+      role: myRole 
+    });
   };
 
   // LOGIKA LANJUT KE FOTO BERIKUTNYA / FINISH
@@ -223,7 +231,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
 
   const triggerNextShotAction = () => {
     handleLocalNextShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
+    socket.emit('photobooth_action', { 
+      room_code: roomCode, 
+      action: 'next_shot',
+      sender: currentUser,
+      role: myRole 
+    });
   };
 
   // RETAKE ALL DARI RESULT
@@ -238,7 +251,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
 
   const triggerRetakeAllAction = () => {
     handleLocalRetakeAll();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
+    socket.emit('photobooth_action', { 
+      room_code: roomCode, 
+      action: 'retake_all',
+      sender: currentUser,
+      role: myRole 
+    });
   };
 
   const loadImage = (src) => {
@@ -290,12 +308,29 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     }
   };
 
+  // HANDLER KLIK MENGERTI
   const handleConfirmTutorial = () => {
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'ready' });
+    // Optimistic Update Lokal
+    if (isP1) setP1Ready(true);
+    else setP2Ready(true);
+
+    // Kirim Ke Socket
+    socket.emit('photobooth_action', { 
+      room_code: roomCode, 
+      action: 'ready',
+      sender: currentUser,
+      role: myRole
+    });
   };
 
   const handleProposeFrame = (frame) => {
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'propose_frame', frame_id: frame.id });
+    socket.emit('photobooth_action', { 
+      room_code: roomCode, 
+      action: 'propose_frame', 
+      frame_id: frame.id,
+      sender: currentUser,
+      role: myRole 
+    });
   };
 
   const handleConfirmFrame = (isAgreed) => {
@@ -306,11 +341,23 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       setPhotoCount(1);
       setCapturedPhotos([]);
       setShootingSubPhase('countdown');
-      socket.emit('photobooth_action', { room_code: roomCode, action: 'confirm_frame', agreed: true });
+      socket.emit('photobooth_action', { 
+        room_code: roomCode, 
+        action: 'confirm_frame', 
+        agreed: true,
+        sender: currentUser,
+        role: myRole 
+      });
     } else {
       setProposedFrame(null);
       setProposedBy(null);
-      socket.emit('photobooth_action', { room_code: roomCode, action: 'confirm_frame', agreed: false });
+      socket.emit('photobooth_action', { 
+        room_code: roomCode, 
+        action: 'confirm_frame', 
+        agreed: false,
+        sender: currentUser,
+        role: myRole 
+      });
     }
   };
 
@@ -423,7 +470,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
 
           <div className="canvas-work-area" style={{ 
             display: 'flex', 
-            justify: 'center', 
+            justifyContent: 'center', 
             alignItems: 'center', 
             padding: '20px', 
             minHeight: phase === 'result' ? '520px' : '380px', 
@@ -436,7 +483,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <div style={{ 
                   display: 'flex',
-                  justify: 'center',
+                  justifyContent: 'center',
                   alignItems: 'center',
                   gap: '20px',
                   flexWrap: 'wrap',
@@ -627,7 +674,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
                   <>
                     <div style={{ 
                       display: 'flex', 
-                      justify: 'center', 
+                      justifyContent: 'center', 
                       alignItems: 'center', 
                       maxHeight: '420px', 
                       overflow: 'hidden',
