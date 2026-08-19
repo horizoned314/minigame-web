@@ -48,11 +48,12 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     return () => clearInterval(interval);
   }, [currentUser]);
 
+  // Cari bagian ini di Dashboard.jsx lalu urutannya disesuaikan:
   useEffect(() => {
     function handleGameStart(payload) {
       console.log("[SOCKET] trigger_game_start diterima:", payload);
       setIsWaiting(false);
-      
+    
       const opponentString = payload.players.find(
         (p) => p.toUpperCase() !== currentUser.toUpperCase()
       ) || "OPPONENT";
@@ -60,13 +61,14 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
       const gameType = payload.game_type || "tictactoe";
       const gameState = payload[`${gameType}_state`] || {};
 
-      onStartGame(opponentString, payload.room_code, gameType, gameState); 
+      // FIX URUTAN PARAMETER: opponent, room_code, gameState, gameType
+      onStartGame(opponentString, payload.room_code, gameState, gameType); 
     }
 
     socket.on("trigger_game_start", handleGameStart);
     return () => socket.off("trigger_game_start", handleGameStart);
   }, [currentUser, onStartGame]);
-
+  
   const handleInviteFriend = async (e, gameName, gameId) => {
     e.preventDefault();
 
