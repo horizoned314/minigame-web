@@ -13,8 +13,6 @@ const ICE_SERVERS = {
 };
 
 function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
-  // 1. IDENTIFIKASI ROLE TANPA BERGANTUNG PADA BACKEND
-  // Urutkan nama secara alfabetis agar P1 dan P2 selalu konsisten di kedua layar
   const cleanCurrent = currentUser?.toUpperCase() || "PLAYER";
   const cleanOpponent = opponentName?.toUpperCase() || "FRIEND";
   
@@ -22,12 +20,10 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   const p1Name = sortedPlayers[0];
   const p2Name = sortedPlayers[1];
   
-  // isOfferer bertindak sebagai P1 untuk keperluan WebRTC
   const isOfferer = cleanCurrent === p1Name;
 
-  // 2. STATE GAME
   const [localReadySent, setLocalReadySent] = useState(false);
-  const [iProposed, setIProposed] = useState(false); // Penanda siapa yang klik frame
+  const [iProposed, setIProposed] = useState(false); 
 
   const [phase, setPhase] = useState(initialGameState?.phase || 'tutorial');
   const [p1Ready, setP1Ready] = useState(initialGameState?.p1_ready || false);
@@ -36,14 +32,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   const [proposedFrame, setProposedFrame] = useState(null); 
   const [selectedFrame, setSelectedFrame] = useState(FRAME_OPTIONS[0]); 
 
-  // 3. WEBRTC REFS
-  const localVideoRef1 = useRef(null); // Selalu untuk Box Kiri (p1Name)
-  const localVideoRef2 = useRef(null); // Selalu untuk Box Kanan (p2Name)
+  const localVideoRef1 = useRef(null); 
+  const localVideoRef2 = useRef(null); 
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(new MediaStream());
   const pcRef = useRef(null);
 
-  // 4. TIMING & SNAPSHOT STATE
   const [photoCount, setPhotoCount] = useState(1);
   const [countdown, setCountdown] = useState(10);
   const [shootingSubPhase, setShootingSubPhase] = useState('countdown'); 
@@ -103,7 +97,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       if (data.proposed_frame !== undefined) {
         setProposedFrame(data.proposed_frame);
         if (data.proposed_frame === null) {
-          setIProposed(false); // Reset jika ditolak backend
+          setIProposed(false); 
         }
       }
       
@@ -178,6 +172,8 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
           }
         } catch (err) {
           console.error("Camera/WebRTC failed:", err);
+          // Alert dimunculkan agar user tahu kamera terblokir
+          alert("Gagal mengakses kamera! Harap izinkan akses kamera di browser Anda lalu refresh halaman.");
         }
       }
       startCameraAndWebRTC();
@@ -239,7 +235,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     const canvas1 = document.createElement('canvas');
     canvas1.width = 640; canvas1.height = 480;
     const ctx1 = canvas1.getContext('2d');
-    if (localVideoRef1.current) {
+    
+    // Fallback warna hitam jika video gagal dimuat
+    ctx1.fillStyle = '#111';
+    ctx1.fillRect(0, 0, canvas1.width, canvas1.height);
+    
+    if (localVideoRef1.current && localVideoRef1.current.readyState >= 2) {
       ctx1.translate(canvas1.width, 0); ctx1.scale(-1, 1);
       ctx1.drawImage(localVideoRef1.current, 0, 0, canvas1.width, canvas1.height);
     }
@@ -247,7 +248,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     const canvas2 = document.createElement('canvas');
     canvas2.width = 640; canvas2.height = 480;
     const ctx2 = canvas2.getContext('2d');
-    if (localVideoRef2.current) {
+    
+    // Fallback warna hitam jika video gagal dimuat
+    ctx2.fillStyle = '#111';
+    ctx2.fillRect(0, 0, canvas2.width, canvas2.height);
+
+    if (localVideoRef2.current && localVideoRef2.current.readyState >= 2) {
       ctx2.translate(canvas2.width, 0); ctx2.scale(-1, 1);
       ctx2.drawImage(localVideoRef2.current, 0, 0, canvas2.width, canvas2.height);
     }
@@ -319,8 +325,11 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
 
   const loadImage = (src) => {
     return new Promise((resolve, reject) => {
-      const img = new Image(); img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img); img.onerror = (err) => reject(err); img.src = src;
+      const img = new Image(); 
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img); 
+      img.onerror = (err) => reject(err); 
+      img.src = src;
     });
   };
 
@@ -330,11 +339,14 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       canvas.width = 600; canvas.height = 1800;
       const ctx = canvas.getContext('2d');
       const frameImgPromise = loadImage(frameObj.src);
+      
       const snapsPromises = snaps.slice(0, 3).map(async (snap) => {
-        const imgA = snap.a ? await loadImage(snap.a) : null;
-        const imgB = snap.b ? await loadImage(snap.b) : null;
+        // PERBAIKAN: Optional chaining (snap?.a) agar tidak crash jika snap undefined
+        const imgA = snap?.a ? await loadImage(snap.a).catch(()=>null) : null;
+        const imgB = snap?.b ? await loadImage(snap.b).catch(()=>null) : null;
         return { imgA, imgB };
       });
+      
       const [frameImg, loadedSnaps] = await Promise.all([frameImgPromise, Promise.all(snapsPromises)]);
       
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -346,9 +358,12 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
         if (imgA) drawImageCover(ctx, imgA, 35, y, photoW, photoH);
         if (imgB) drawImageCover(ctx, imgB, 295, y, photoW, photoH);
       });
+      
       ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
       setFinalPhotostripUrl(canvas.toDataURL('image/png'));
-    } catch (err) { console.error("Strip error:", err); }
+    } catch (err) { 
+      console.error("Strip error:", err); 
+    }
   };
 
   // ==========================================
@@ -395,18 +410,14 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
             <div className="tutorial-text-content" style={{ fontFamily: 'monospace', fontSize: '0.65rem', textAlign: 'left', lineHeight: '1.4', color: '#fff', margin: '15px 0' }}>
               <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>1. PILIH FRAME BERSAMA</p>
               <p style={{ marginBottom: '10px' }}>Pilih style frame favorit kalian. Temanmu harus setuju sebelum mulai.</p>
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>2. PEMOTRETAN (3 FOTO @ 10 DETIK)</p>
-              <p style={{ marginBottom: '10px' }}>Setiap foto ada timer 10 detik. Posisikan wajah kalian di dalam box dual kamera!</p>
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>3. RETAKE SETIAP FOTO</p>
-              <p style={{ marginBottom: '10px' }}>Jika hasil foto kurang bagus, kalian bisa langsung klik [ RETAKE ] di tiap akhir jepretan!</p>
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>4. DOWNLOAD PHOTOSTRIP</p>
-              <p>Simpan hasil akhir photostrip langsung ke laptop kamu!</p>
+              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>2. WEBRTC LIVE VIDEO</p>
+              <p style={{ marginBottom: '10px' }}>Sekarang kalian bisa melihat satu sama lain secara live saat berpose!</p>
             </div>
             <div style={{ marginTop: '20px' }}>
               <button 
                 className="ttt-action-btn next-btn" 
-                onClick={handleConfirmTutorial}
-                disabled={localReadySent}
+                onClick={handleConfirmTutorial} 
+                disabled={localReadySent} 
                 style={{ opacity: localReadySent ? 0.5 : 1 }}
               >
                 {localReadySent ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
@@ -461,16 +472,8 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
             <div className="gartic-score"><span>PLAYER 2: {p2Name}</span></div>
           </header>
 
-          <div className="gartic-status-bar">
-            {phase === 'tutorial' && <p className="status-text blink-text">WAITING FOR ALL PLAYERS TO READ TUTORIAL...</p>}
-            {phase === 'frame_select' && <p className="status-text" style={{ color: 'var(--color-cyan)' }}>CHOOSE A FRAME TO CONTINUE</p>}
-            {phase === 'shooting' && <p className="status-text winner-highlight">PHOTO {photoCount} OF 3 - {shootingSubPhase === 'countdown' ? 'GET READY!' : 'PREVIEW & DECIDE'}</p>}
-            {phase === 'result' && <p className="status-text" style={{ color: 'var(--color-cyan)' }}>PHOTOSTRIP READY TO DOWNLOAD!</p>}
-          </div>
-
           <div className="canvas-work-area" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px', minHeight: phase === 'result' ? '520px' : '380px', boxSizing: 'border-box', width: '100%' }}>
             
-            {/* PHASE 1: FRAME SELECT */}
             {phase === 'frame_select' && (
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', flexWrap: 'wrap', width: '100%', maxWidth: '750px' }}>
@@ -488,7 +491,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
               </div>
             )}
 
-            {/* PHASE 2: SHOOTING (WEBRTC LIVE CAMERA) */}
             {phase === 'shooting' && (
               <div style={{ display: 'flex', gap: '25px', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: '800px' }}>
                 
@@ -526,7 +528,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
                         </div>
                       </>
                     ) : (
-                      /* REVIEW SNAPSHOT HASIL JEPRETAN */
                       <div style={{ display: 'flex', width: '100%', height: '100%', backgroundColor: '#111' }}>
                         <div style={{ width: '50%', height: '100%', borderRight: '1px solid #222', position: 'relative' }}>
                            {currentSnap.a ? <img src={currentSnap.a} alt="Snap A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>LOADING...</div>}
@@ -542,7 +543,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
                   </p>
                 </div>
 
-                {/* SIDEBAR PANEL TIMING & ACTIONS */}
                 <div style={{ width: '230px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#111827', border: '2px solid var(--color-cyan)', borderRadius: '8px', padding: '20px 15px', boxShadow: '0 4px 12px rgba(0,0,0,0.6)' }}>
                   <div style={{ fontSize: '0.7rem', color: '#8d99ae', fontFamily: 'monospace', marginBottom: '5px' }}>POSING SESSION</div>
                   <div style={{ fontSize: '1.2rem', color: '#02c39a', fontFamily: 'monospace', fontWeight: 'bold', marginBottom: '15px' }}>FOTO {photoCount} / 3</div>
@@ -559,18 +559,11 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
                       <button onClick={triggerNextShotAction} className="ttt-action-btn next-btn" style={{ width: '100%', padding: '8px 5px', fontSize: '0.6rem' }}>{photoCount < 3 ? '[ LANJUT FOTO ' + (photoCount + 1) + ' ]' : '[ LIHAT HASIL AKHIR ]'} ({reviewTimer}s)</button>
                     </>
                   )}
-
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-                    {[0, 1, 2].map((idx) => (
-                      <div key={idx} style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: idx < photoCount - 1 ? '#02c39a' : (idx === photoCount - 1 ? '#F72585' : '#333'), border: '1px solid #555' }} />
-                    ))}
-                  </div>
                 </div>
 
               </div>
             )}
 
-            {/* PHASE 3: RESULT PHOTOSTRIP */}
             {phase === 'result' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px', width: '100%' }}>
                 {finalPhotostripUrl ? (
