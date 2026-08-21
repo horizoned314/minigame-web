@@ -53,34 +53,20 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   // ==========================================
   const createPeerConnection = () => {
     if (pcRef.current) return pcRef.current;
-
     const pc = new RTCPeerConnection(ICE_SERVERS);
-
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        socket.emit('webrtc_ice_candidate', {
-          room_code: roomCode,
-          candidate: event.candidate
-        });
+        socket.emit('webrtc_ice_candidate', { room_code: roomCode, candidate: event.candidate });
       }
     };
-
     pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        remoteStreamRef.current.addTrack(track);
-      });
+      event.streams[0].getTracks().forEach((track) => remoteStreamRef.current.addTrack(track));
       const remoteVideoElem = isOfferer ? localVideoRef2.current : localVideoRef1.current;
-      if (remoteVideoElem) {
-        remoteVideoElem.srcObject = remoteStreamRef.current;
-      }
+      if (remoteVideoElem) remoteVideoElem.srcObject = remoteStreamRef.current;
     };
-
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current);
-      });
+      localStreamRef.current.getTracks().forEach((track) => pc.addTrack(track, localStreamRef.current));
     }
-
     pcRef.current = pc;
     return pc;
   };
@@ -96,11 +82,8 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       
       if (data.proposed_frame !== undefined) {
         setProposedFrame(data.proposed_frame);
-        if (data.proposed_frame === null) {
-          setIProposed(false); 
-        }
+        if (data.proposed_frame === null) setIProposed(false); 
       }
-      
       if (data.selected_frame) setSelectedFrame(data.selected_frame);
       
       if (data.action === 'retake_current_shot') handleLocalRetakeCurrentShot();
@@ -119,19 +102,11 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     });
 
     socket.on('webrtc_answer', async ({ answer }) => {
-      if (isOfferer && pcRef.current) {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-      }
+      if (isOfferer && pcRef.current) await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
     });
 
     socket.on('webrtc_ice_candidate', async ({ candidate }) => {
-      if (pcRef.current && candidate) {
-        try {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error("ICE Error:", err);
-        }
-      }
+      if (pcRef.current && candidate) await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(()=>{});
     });
 
     return () => {
@@ -149,10 +124,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     if (phase === 'shooting') {
       async function startCameraAndWebRTC() {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 },
-            audio: false
-          });
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
           localStreamRef.current = stream;
 
           const myVideoElem = isOfferer ? localVideoRef1.current : localVideoRef2.current;
@@ -171,9 +143,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
             socket.emit('webrtc_offer', { room_code: roomCode, offer: offer });
           }
         } catch (err) {
-          console.error("Camera/WebRTC failed:", err);
-          // Alert dimunculkan agar user tahu kamera terblokir
-          alert("Gagal mengakses kamera! Harap izinkan akses kamera di browser Anda lalu refresh halaman.");
+          console.error("Camera/WebRTC failed (Bisa diabaikan, fallback aman):", err);
         }
       }
       startCameraAndWebRTC();
@@ -219,14 +189,9 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     return () => clearTimeout(timer);
   }, [phase, shootingSubPhase, reviewTimer]);
 
-  useEffect(() => {
-    if (phase === 'result' && capturedPhotos.length >= 3) {
-      generateFinalPhotostrip(capturedPhotos, selectedFrame);
-    }
-  }, [phase, capturedPhotos]);
 
   // ==========================================
-  // SNAPSHOT & STRIP GENERATOR
+  // SNAPSHOT & STRIP GENERATOR (BULLETPROOF)
   // ==========================================
   const triggerSnapPhoto = () => {
     setIsFlash(true);
@@ -236,7 +201,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     canvas1.width = 640; canvas1.height = 480;
     const ctx1 = canvas1.getContext('2d');
     
-    // Fallback warna hitam jika video gagal dimuat
     ctx1.fillStyle = '#111';
     ctx1.fillRect(0, 0, canvas1.width, canvas1.height);
     
@@ -249,7 +213,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     canvas2.width = 640; canvas2.height = 480;
     const ctx2 = canvas2.getContext('2d');
     
-    // Fallback warna hitam jika video gagal dimuat
     ctx2.fillStyle = '#111';
     ctx2.fillRect(0, 0, canvas2.width, canvas2.height);
 
@@ -276,11 +239,6 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     setShootingSubPhase('countdown');
   };
 
-  const triggerRetakeCurrentShot = () => {
-    handleLocalRetakeCurrentShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
-  };
-
   const handleLocalNextShot = () => {
     setPhotoCount((prevCount) => {
       if (prevCount < 3) {
@@ -294,22 +252,25 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     });
   };
 
-  const triggerNextShotAction = () => {
-    handleLocalNextShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
-  };
-
   const handleLocalRetakeAll = () => {
     setPhotoCount(1); setCountdown(10); setCapturedPhotos([]);
     setFinalPhotostripUrl(null); setShootingSubPhase('countdown'); setPhase('shooting');
   };
 
-  const triggerRetakeAllAction = () => {
-    handleLocalRetakeAll();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
-  };
+  const triggerRetakeCurrentShot = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
+  const triggerNextShotAction = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
+  const triggerRetakeAllAction = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
 
+  // EXECUTE GENERATOR SAAT PHASE RESULT
+  useEffect(() => {
+    if (phase === 'result') {
+      generateFinalPhotostrip(capturedPhotos, selectedFrame);
+    }
+  }, [phase, capturedPhotos, selectedFrame]);
+
+  // SAFE DRAW (Mencegah error canvas saat image rusak)
   const drawImageCover = (ctx, img, x, y, targetWidth, targetHeight) => {
+    if (!img || !img.width || !img.height) return; // Murni safety check
     const imgRatio = img.width / img.height;
     const targetRatio = targetWidth / targetHeight;
     let sx, sy, sw, sh;
@@ -323,66 +284,87 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     ctx.drawImage(img, sx, sy, sw, sh, x, y, targetWidth, targetHeight);
   };
 
+  // 🚨 SUPER BULLETPROOF LOAD IMAGE 🚨
+  // Jika gambar butuh waktu > 5 Detik, paksa jadikan null agar gak nahan sistem!
   const loadImage = (src) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
+      if (!src) return resolve(null);
+      
+      let isResolved = false;
       const img = new Image(); 
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img); 
-      img.onerror = (err) => reject(err); 
+      img.crossOrigin = 'anonymous'; 
+
+      // Sabuk Pengaman: Timer pembatas 5 detik
+      const safetyTimer = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          resolve(null);
+        }
+      }, 5000);
+
+      img.onload = () => {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(safetyTimer);
+        resolve(img);
+      }; 
+      img.onerror = () => {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(safetyTimer);
+        resolve(null);
+      }; 
       img.src = src;
     });
   };
 
-const generateFinalPhotostrip = async (snaps, frameObj) => {
+  const generateFinalPhotostrip = async (snaps, frameObj) => {
     try {
       const canvas = document.createElement('canvas');
-      canvas.width = 600; 
-      canvas.height = 1800;
+      canvas.width = 600; canvas.height = 1800;
       const ctx = canvas.getContext('2d');
       
-      // Load frame dengan error handling
-      const frameImgPromise = loadImage(frameObj.src).catch(() => null);
+      // Berikan warna latar gelap sebagai fallback
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const frameImgPromise = loadImage(frameObj?.src || FRAME_OPTIONS[0].src);
       
-      // PERBAIKAN: Paksa perulangan tepat 3 kali (Index 0, 1, 2)
-      // Ini mencegah crash jika array 'snaps' memiliki slot kosong (undefined)
+      // Paksa map berjalan 3 kali agar tidak nyangkut ([0,1,2])
       const snapsPromises = [0, 1, 2].map(async (i) => {
-        const snap = snaps[i]; // Bisa undefined jika foto terlewat/error
-        const imgA = snap?.a ? await loadImage(snap.a).catch(() => null) : null;
-        const imgB = snap?.b ? await loadImage(snap.b).catch(() => null) : null;
+        const snap = snaps[i] || {};
+        const imgA = snap?.a ? await loadImage(snap.a) : null;
+        const imgB = snap?.b ? await loadImage(snap.b) : null;
         return { imgA, imgB };
       });
       
-      const [frameImg, loadedSnaps] = await Promise.all([
-        frameImgPromise, 
-        Promise.all(snapsPromises)
-      ]);
-      
-      // Beri warna dasar hitam (fallback jika ada foto yang gagal load)
-      ctx.fillStyle = '#111';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const [frameImg, loadedSnaps] = await Promise.all([frameImgPromise, Promise.all(snapsPromises)]);
       
       const slotYPositions = [75, 531, 987];
-      const photoW = 270; 
-      const photoH = 440;
+      const photoW = 270; const photoH = 440;
 
-      // Iterasi ke array yang sudah terjamin aman dari undefined
-      loadedSnaps.forEach((loadedData, idx) => {
-        // Fallback ke empty object {} jika data masih undefined
-        const { imgA, imgB } = loadedData || {};
+      // Sisipkan foto ke dalam slot dengan aman
+      loadedSnaps.forEach((loaded, idx) => {
+        if (!loaded) return;
+        const { imgA, imgB } = loaded;
         const y = slotYPositions[idx];
-        
         if (imgA) drawImageCover(ctx, imgA, 35, y, photoW, photoH);
         if (imgB) drawImageCover(ctx, imgB, 295, y, photoW, photoH);
       });
       
-      // Gambar frame paling atas (jika berhasil diload)
-      if (frameImg) {
-        ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
-      }
+      if (frameImg) ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
       
+      // Paksa publish gambar apa pun yg berhasil ter-render
       setFinalPhotostripUrl(canvas.toDataURL('image/png'));
+
     } catch (err) { 
-      console.error("Strip error:", err); 
+      // EMERGENCY FALLBACK (Kalau sampai browser ngawur/memori habis)
+      console.error("Terjadi error tak terduga, meluncurkan kanvas darurat:", err); 
+      const emergencyCanvas = document.createElement('canvas');
+      emergencyCanvas.width = 600; emergencyCanvas.height = 1800;
+      const eCtx = emergencyCanvas.getContext('2d');
+      eCtx.fillStyle = '#111'; eCtx.fillRect(0,0,600,1800);
+      setFinalPhotostripUrl(emergencyCanvas.toDataURL('image/png'));
     }
   };
 
@@ -434,12 +416,7 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
               <p style={{ marginBottom: '10px' }}>Sekarang kalian bisa melihat satu sama lain secara live saat berpose!</p>
             </div>
             <div style={{ marginTop: '20px' }}>
-              <button 
-                className="ttt-action-btn next-btn" 
-                onClick={handleConfirmTutorial} 
-                disabled={localReadySent} 
-                style={{ opacity: localReadySent ? 0.5 : 1 }}
-              >
+              <button className="ttt-action-btn next-btn" onClick={handleConfirmTutorial} disabled={localReadySent} style={{ opacity: localReadySent ? 0.5 : 1 }}>
                 {localReadySent ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
               </button>
             </div>
@@ -453,18 +430,10 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
           <div className="game-over-box" style={{ maxWidth: '400px' }}>
             <h3 className="game-over-title">[ FRAME PROPOSAL ]</h3>
             <p style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#fff', margin: '15px 0' }}>
-              {iProposed 
-                ? `Kamu mengusulkan frame "${proposedFrame.name}". Menunggu persetujuan teman...`
-                : `${cleanOpponent} memilih frame "${proposedFrame.name}". Gunakan bingkai ini?`
-              }
+              {iProposed ? `Kamu mengusulkan frame "${proposedFrame.name}". Menunggu persetujuan teman...` : `${cleanOpponent} memilih frame "${proposedFrame.name}". Gunakan bingkai ini?`}
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '15px 0' }}>
-              <img 
-                src={proposedFrame.src} 
-                alt={proposedFrame.name} 
-                style={{ height: '160px', borderRadius: '4px', border: `2px solid ${proposedFrame.color}` }}
-                onError={(e) => { e.target.style.display = 'none'; }} 
-              />
+              <img src={proposedFrame.src} alt={proposedFrame.name} style={{ height: '160px', borderRadius: '4px', border: `2px solid ${proposedFrame.color}` }} onError={(e) => { e.target.style.display = 'none'; }} />
             </div>
 
             {!iProposed ? (
@@ -498,11 +467,7 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', flexWrap: 'wrap', width: '100%', maxWidth: '750px' }}>
                   {FRAME_OPTIONS.map((frame) => (
-                    <div 
-                      key={frame.id}
-                      onClick={() => handleProposeFrame(frame)}
-                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '12px', backgroundColor: '#16213e', border: `2px solid ${frame.color}`, borderRadius: '6px', width: '135px', transition: 'transform 0.2s', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}
-                    >
+                    <div key={frame.id} onClick={() => handleProposeFrame(frame)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '12px', backgroundColor: '#16213e', border: `2px solid ${frame.color}`, borderRadius: '6px', width: '135px', transition: 'transform 0.2s', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>
                       <img src={frame.src} alt={frame.name} style={{ height: '180px', objectFit: 'contain', marginBottom: '10px' }} onError={(e) => { e.target.style.display = 'none'; }} />
                       <span style={{ color: frame.color, fontFamily: 'monospace', fontSize: '0.65rem', textAlign: 'center', fontWeight: 'bold' }}>[ {frame.name} ]</span>
                     </div>
@@ -513,35 +478,19 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
 
             {phase === 'shooting' && (
               <div style={{ display: 'flex', gap: '25px', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: '800px' }}>
-                
                 <div style={{ flex: '1 1 480px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ width: '100%', maxWidth: '480px', height: '280px', backgroundColor: '#000', border: '3px solid var(--color-cyan)', borderRadius: '8px', overflow: 'hidden', display: 'flex', position: 'relative', boxShadow: '0 0 15px rgba(76, 201, 240, 0.3)' }}>
                     
                     {shootingSubPhase === 'countdown' ? (
                       <>
-                        {/* BOX KIRI (P1) */}
                         <div style={{ flex: 1, position: 'relative', borderRight: '2px solid #222', overflow: 'hidden', backgroundColor: '#111' }}>
-                          <video 
-                            ref={localVideoRef1} 
-                            autoPlay 
-                            playsInline 
-                            muted={isOfferer} 
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
-                          />
+                          <video ref={localVideoRef1} autoPlay playsInline muted={isOfferer} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
                             [ {p1Name} {isOfferer ? '(YOU)' : ''} ]
                           </div>
                         </div>
-
-                        {/* BOX KANAN (P2) */}
                         <div style={{ flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#111' }}>
-                          <video 
-                            ref={localVideoRef2} 
-                            autoPlay 
-                            playsInline 
-                            muted={!isOfferer} 
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
-                          />
+                          <video ref={localVideoRef2} autoPlay playsInline muted={!isOfferer} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
                             [ {p2Name} {!isOfferer ? '(YOU)' : ''} ]
                           </div>
@@ -550,10 +499,10 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
                     ) : (
                       <div style={{ display: 'flex', width: '100%', height: '100%', backgroundColor: '#111' }}>
                         <div style={{ width: '50%', height: '100%', borderRight: '1px solid #222', position: 'relative' }}>
-                           {currentSnap.a ? <img src={currentSnap.a} alt="Snap A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>LOADING...</div>}
+                           {currentSnap.a ? <img src={currentSnap.a} alt="Snap A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>NO IMAGE</div>}
                         </div>
                         <div style={{ width: '50%', height: '100%', position: 'relative' }}>
-                           {currentSnap.b ? <img src={currentSnap.b} alt="Snap B" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>LOADING...</div>}
+                           {currentSnap.b ? <img src={currentSnap.b} alt="Snap B" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>NO IMAGE</div>}
                         </div>
                       </div>
                     )}
@@ -580,7 +529,6 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
                     </>
                   )}
                 </div>
-
               </div>
             )}
 
@@ -593,7 +541,7 @@ const generateFinalPhotostrip = async (snaps, frameObj) => {
                     </div>
                     <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                       <a href={finalPhotostripUrl} download={`Photostrip_${selectedFrame.id}.png`} className="ttt-action-btn next-btn" style={{ textDecoration: 'none', padding: '10px 15px', display: 'inline-block' }}>[ DOWNLOAD PHOTOSTRIP ]</a>
-                      <button onClick={triggerRetakeAllAction} className="ttt-action-btn exit-btn" style={{ padding: '10px 15px' }}>[ RETAKE ]</button>
+                      <button onClick={triggerRetakeAllAction} className="ttt-action-btn exit-btn" style={{ padding: '10px 15px' }}>[ RETAKE ALL ]</button>
                     </div>
                   </>
                 ) : (
