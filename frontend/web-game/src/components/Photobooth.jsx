@@ -333,33 +333,53 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     });
   };
 
-  const generateFinalPhotostrip = async (snaps, frameObj) => {
+const generateFinalPhotostrip = async (snaps, frameObj) => {
     try {
       const canvas = document.createElement('canvas');
-      canvas.width = 600; canvas.height = 1800;
+      canvas.width = 600; 
+      canvas.height = 1800;
       const ctx = canvas.getContext('2d');
-      const frameImgPromise = loadImage(frameObj.src);
       
-      const snapsPromises = snaps.slice(0, 3).map(async (snap) => {
-        // PERBAIKAN: Optional chaining (snap?.a) agar tidak crash jika snap undefined
-        const imgA = snap?.a ? await loadImage(snap.a).catch(()=>null) : null;
-        const imgB = snap?.b ? await loadImage(snap.b).catch(()=>null) : null;
+      // Load frame dengan error handling
+      const frameImgPromise = loadImage(frameObj.src).catch(() => null);
+      
+      // PERBAIKAN: Paksa perulangan tepat 3 kali (Index 0, 1, 2)
+      // Ini mencegah crash jika array 'snaps' memiliki slot kosong (undefined)
+      const snapsPromises = [0, 1, 2].map(async (i) => {
+        const snap = snaps[i]; // Bisa undefined jika foto terlewat/error
+        const imgA = snap?.a ? await loadImage(snap.a).catch(() => null) : null;
+        const imgB = snap?.b ? await loadImage(snap.b).catch(() => null) : null;
         return { imgA, imgB };
       });
       
-      const [frameImg, loadedSnaps] = await Promise.all([frameImgPromise, Promise.all(snapsPromises)]);
+      const [frameImg, loadedSnaps] = await Promise.all([
+        frameImgPromise, 
+        Promise.all(snapsPromises)
+      ]);
       
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Beri warna dasar hitam (fallback jika ada foto yang gagal load)
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
       const slotYPositions = [75, 531, 987];
-      const photoW = 270; const photoH = 440;
+      const photoW = 270; 
+      const photoH = 440;
 
-      loadedSnaps.forEach(({ imgA, imgB }, idx) => {
+      // Iterasi ke array yang sudah terjamin aman dari undefined
+      loadedSnaps.forEach((loadedData, idx) => {
+        // Fallback ke empty object {} jika data masih undefined
+        const { imgA, imgB } = loadedData || {};
         const y = slotYPositions[idx];
+        
         if (imgA) drawImageCover(ctx, imgA, 35, y, photoW, photoH);
         if (imgB) drawImageCover(ctx, imgB, 295, y, photoW, photoH);
       });
       
-      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      // Gambar frame paling atas (jika berhasil diload)
+      if (frameImg) {
+        ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      }
+      
       setFinalPhotostripUrl(canvas.toDataURL('image/png'));
     } catch (err) { 
       console.error("Strip error:", err); 
