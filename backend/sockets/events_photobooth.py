@@ -79,62 +79,35 @@ def register_photobooth_events(sio):
             # (misalnya foto ke-2 langsung loncat ke foto ke-3).
             await game.sync_action(action, skip_sid=sid)
 
-    # ==========================================
-    # WEBRTC SIGNALING RELAY
-    # ==========================================
-
-    @sio.on("webrtc_ready")
-    async def relay_webrtc_ready(sid, data=None):
-        data = data or {}
-        room_code = data.get("room_code")
-        username = _username_from_sid(sid)
-
-        if not _is_room_player(room_code, username):
-            return
-
-        await sio.emit("webrtc_ready", {
-            "role": data.get("role"),
-            "from": username,
-        }, room=room_code, skip_sid=sid)
-
+    # === WEBRTC SIGNALING EVENTS ===
     @sio.on("webrtc_offer")
-    async def relay_webrtc_offer(sid, data=None):
-        data = data or {}
+    async def handle_webrtc_offer(sid, data):
         room_code = data.get("room_code")
-        username = _username_from_sid(sid)
-
-        if not _is_room_player(room_code, username):
-            return
-
-        await sio.emit("webrtc_offer", {
-            "offer": data.get("offer"),
-            "from": username,
-        }, room=room_code, skip_sid=sid)
+        if room_code:
+            await sio.emit("webrtc_offer", data, room=room_code, skip_sid=sid)
 
     @sio.on("webrtc_answer")
-    async def relay_webrtc_answer(sid, data=None):
-        data = data or {}
+    async def handle_webrtc_answer(sid, data):
         room_code = data.get("room_code")
-        username = _username_from_sid(sid)
-
-        if not _is_room_player(room_code, username):
-            return
-
-        await sio.emit("webrtc_answer", {
-            "answer": data.get("answer"),
-            "from": username,
-        }, room=room_code, skip_sid=sid)
+        if room_code:
+            await sio.emit("webrtc_answer", data, room=room_code, skip_sid=sid)
 
     @sio.on("webrtc_ice_candidate")
-    async def relay_webrtc_ice_candidate(sid, data=None):
-        data = data or {}
+    async def handle_webrtc_ice(sid, data):
         room_code = data.get("room_code")
-        username = _username_from_sid(sid)
+        if room_code:
+            await sio.emit("webrtc_ice_candidate", data, room=room_code, skip_sid=sid)
 
-        if not _is_room_player(room_code, username):
+    @sio.on("disconnect")
+    async def on_photobooth_disconnect(sid):
+        raw_user = state.active_sockets.get(sid)
+        if not raw_user:
             return
-
-        await sio.emit("webrtc_ice_candidate", {
-            "candidate": data.get("candidate"),
-            "from": username,
-        }, room=room_code, skip_sid=sid)
+            
+        username = str(raw_user.get("username", raw_user)) if isinstance(raw_user, dict) else str(raw_user)
+        
+        for room_code, game in list(active_photobooths.items()):
+            if username in [game.p1, game.p2]:
+                del active_photobooths[room_code]
+                print(f"📸 [PHOTOBOOTH] Room {room_code} dihapus karena player disconnect.")
+                break

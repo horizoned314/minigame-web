@@ -26,48 +26,28 @@ const ICE_SERVERS = {
   iceCandidatePoolSize: 4,
 };
 
-const sameUser = (a, b) =>
-  String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
-
-function Photobooth({
-  currentUser,
-  opponentName,
-  roomCode,
-  player1Name: player1Prop,
-  player2Name: player2Prop,
-  initialGameState,
-  onBackToDashboard,
-  isP1: isP1Prop
-}) {
-  // ROLE: server selalu mengirim p1_name (host) dan p2_name (joiner).
-  // Sebelumnya kalau p1_name tidak ada, SEMUA device dianggap P1,
-  // sehingga dua-duanya membuat offer dan tidak ada yang menjawab.
-  const resolvedP1 = initialGameState?.p1_name || player1Prop || null;
-  const isP1 = isP1Prop !== undefined
-    ? isP1Prop
-    : resolvedP1
-      ? sameUser(currentUser, resolvedP1)
-      : (currentUser && opponentName
-        ? String(currentUser).toUpperCase() < String(opponentName).toUpperCase()
-        : true);
-
-  const myRole = isP1 ? 'p1' : 'p2';
-
-  const player1Name = resolvedP1 || (isP1 ? currentUser : opponentName) || "P1";
-  const player2Name = initialGameState?.p2_name || player2Prop || (isP1 ? opponentName : currentUser) || "P2";
+function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
+  const cleanCurrent = currentUser?.toUpperCase() || "PLAYER";
+  const cleanOpponent = opponentName?.toUpperCase() || "FRIEND";
+  
+  const sortedPlayers = [cleanCurrent, cleanOpponent].sort();
+  const p1Name = sortedPlayers[0];
+  const p2Name = sortedPlayers[1];
+  
+  const isOfferer = cleanCurrent === p1Name;
 
   const [localReadySent, setLocalReadySent] = useState(false);
+  const [iProposed, setIProposed] = useState(false); 
+
   const [phase, setPhase] = useState(initialGameState?.phase || 'tutorial');
   const [p1Ready, setP1Ready] = useState(initialGameState?.p1_ready || false);
   const [p2Ready, setP2Ready] = useState(initialGameState?.p2_ready || false);
 
   const [proposedFrame, setProposedFrame] = useState(null); 
-  const [proposedBy, setProposedBy] = useState(null); 
   const [selectedFrame, setSelectedFrame] = useState(FRAME_OPTIONS[0]); 
 
-  // WebRTC Refs
-  const localVideoRef1 = useRef(null); // Box Kiri (P1)
-  const localVideoRef2 = useRef(null); // Box Kanan (P2)
+  const localVideoRef1 = useRef(null); 
+  const localVideoRef2 = useRef(null); 
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
   const pcRef = useRef(null);
@@ -86,219 +66,70 @@ function Photobooth({
   const [reviewTimer, setReviewTimer] = useState(5);
   const [capturedPhotos, setCapturedPhotos] = useState([]); 
   const [isFlash, setIsFlash] = useState(false);
-  const snappingRef = useRef(false);
-
   const [finalPhotostripUrl, setFinalPhotostripUrl] = useState(null);
 
   const readyCount = (p1Ready ? 1 : 0) + (p2Ready ? 1 : 0);
-  const isCurrentClientReady = isP1 ? p1Ready : p2Ready;
 
   // ==========================================
-  // WEBRTC: PEER CONNECTION + TRACKS
+  // WEBRTC PEER CONNECTION SETUP
   // ==========================================
-
-  const getRemoteStream = () => {
-    if (!remoteStreamRef.current) {
-      remoteStreamRef.current = new MediaStream();
-    }
-    return remoteStreamRef.current;
-  };
-
-  const attachRemoteStream = () => {
-    if (!remoteStreamRef.current) return;
-    const remoteVideoElem = isP1 ? localVideoRef2.current : localVideoRef1.current;
-    if (remoteVideoElem && remoteVideoElem.srcObject !== remoteStreamRef.current) {
-      remoteVideoElem.srcObject = remoteStreamRef.current;
-    }
-  };
-
-  const addLocalTracks = (pc) => {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-
-    const existingTracks = new Set(
-      pc.getSenders().map((sender) => sender.track).filter(Boolean)
-    );
-
-    stream.getTracks().forEach((track) => {
-      if (!existingTracks.has(track)) {
-        pc.addTrack(track, stream);
-      }
-    });
-  };
-
-  const flushPendingCandidates = async () => {
-    const pc = pcRef.current;
-    if (!pc || !remoteDescSetRef.current) return;
-
-    const queued = pendingCandidatesRef.current;
-    pendingCandidatesRef.current = [];
-
-    for (const candidate of queued) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("Gagal menambahkan ICE Candidate:", err);
-      }
-    }
-  };
-
   const createPeerConnection = () => {
-    if (pcRef.current) {
-      addLocalTracks(pcRef.current);
-      return pcRef.current;
-    }
-
+    if (pcRef.current) return pcRef.current;
     const pc = new RTCPeerConnection(ICE_SERVERS);
-
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        socket.emit('webrtc_ice_candidate', {
-          room_code: roomCode,
-          candidate: event.candidate
-        });
+        socket.emit('webrtc_ice_candidate', { room_code: roomCode, candidate: event.candidate });
       }
     };
-
     pc.ontrack = (event) => {
-      const stream = getRemoteStream();
-
-      if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach((track) => {
-          if (!stream.getTracks().includes(track)) stream.addTrack(track);
-        });
-      } else if (event.track) {
-        if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
-      }
-
-      attachRemoteStream();
+      event.streams[0].getTracks().forEach((track) => remoteStreamRef.current.addTrack(track));
+      const remoteVideoElem = isOfferer ? localVideoRef2.current : localVideoRef1.current;
+      if (remoteVideoElem) remoteVideoElem.srcObject = remoteStreamRef.current;
     };
-
-    addLocalTracks(pc);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => pc.addTrack(track, localStreamRef.current));
+    }
     pcRef.current = pc;
     return pc;
   };
 
-  const maybeCreateOffer = async () => {
-    if (!isP1 || offerSentRef.current) return;
-    if (!localReadyRef.current || !remoteReadyRef.current) return;
-
-    try {
-      const pc = createPeerConnection();
-      offerSentRef.current = true;
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      socket.emit('webrtc_offer', {
-        room_code: roomCode,
-        offer
-      });
-    } catch (err) {
-      offerSentRef.current = false;
-      console.error("Gagal membuat WebRTC offer:", err);
-    }
-  };
-
-  // P2 memproses offer. Kalau kamera belum siap, offer disimpan dulu.
-  const processOffer = async (offer) => {
-    if (!offer) return;
-
-    if (!localStreamRef.current) {
-      pendingOfferRef.current = offer;
-      return;
-    }
-
-    try {
-      const pc = createPeerConnection();
-
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      remoteDescSetRef.current = true;
-      await flushPendingCandidates();
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      socket.emit('webrtc_answer', {
-        room_code: roomCode,
-        answer
-      });
-    } catch (err) {
-      console.error("Gagal memproses WebRTC offer:", err);
-    }
-  };
-
   // ==========================================
-  // SOCKET LISTENERS (ROOM UPDATE & WEBRTC SIGNALING)
+  // SOCKET LISTENERS
   // ==========================================
   useEffect(() => {
     const handlePhotoboothUpdate = (data) => {
       if (data.phase) setPhase(data.phase);
       if (data.p1_ready !== undefined) setP1Ready(data.p1_ready);
       if (data.p2_ready !== undefined) setP2Ready(data.p2_ready);
-      // Gunakan pengecekan !== undefined supaya nilai null dari server
-      // (misal proposal frame ditolak) benar-benar menghapus modal.
-      if (data.proposed_frame !== undefined) setProposedFrame(data.proposed_frame);
-      if (data.proposed_by !== undefined) setProposedBy(data.proposed_by);
-      if (data.selected_frame !== undefined) setSelectedFrame(data.selected_frame);
-
-      // Aksi hanya dikirim server ke lawan (pengirim sudah menerapkannya lokal),
-      // jadi tidak ada aksi yang dijalankan dua kali.
-      if (data.action === 'retake_current_shot') {
-        handleLocalRetakeCurrentShot();
-      } else if (data.action === 'next_shot') {
-        handleLocalNextShot(data.photo_count);
-      } else if (data.action === 'retake_all') {
-        handleLocalRetakeAll();
-      } else if (typeof data.photo_count === 'number') {
-        setPhotoCount(data.photo_count);
+      
+      if (data.proposed_frame !== undefined) {
+        setProposedFrame(data.proposed_frame);
+        if (data.proposed_frame === null) setIProposed(false); 
       }
-    };
+      if (data.selected_frame) setSelectedFrame(data.selected_frame);
+      
+      if (data.action === 'retake_current_shot') handleLocalRetakeCurrentShot();
+      else if (data.action === 'next_shot') handleLocalNextShot();
+      else if (data.action === 'retake_all') handleLocalRetakeAll();
+    });
 
-    const handleReady = () => {
-      remoteReadyRef.current = true;
-      if (isP1) maybeCreateOffer();
-    };
-
-    const handleOffer = ({ offer } = {}) => {
-      // Hanya P2 yang menjawab offer. Kalau dua-duanya menganggap diri P1,
-      // tidak akan pernah ada answer -> kamera lawan tidak muncul.
-      if (isP1) return;
-      processOffer(offer);
-    };
-
-    const handleAnswer = async ({ answer } = {}) => {
-      if (!isP1 || !answer || !pcRef.current) return;
-
-      try {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-        remoteDescSetRef.current = true;
-        await flushPendingCandidates();
-      } catch (err) {
-        console.error("Gagal memasang WebRTC answer:", err);
+    socket.on('webrtc_offer', async ({ offer }) => {
+      if (!isOfferer) {
+        const pc = createPeerConnection();
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('webrtc_answer', { room_code: roomCode, answer: answer });
       }
-    };
+    });
 
-    const handleIceCandidate = async ({ candidate } = {}) => {
-      if (!candidate) return;
+    socket.on('webrtc_answer', async ({ answer }) => {
+      if (isOfferer && pcRef.current) await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+    });
 
-      if (!pcRef.current || !remoteDescSetRef.current) {
-        pendingCandidatesRef.current.push(candidate);
-        return;
-      }
-
-      try {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("Gagal menambahkan ICE Candidate:", err);
-      }
-    };
-
-    socket.on('photobooth_update', handlePhotoboothUpdate);
-    socket.on('webrtc_ready', handleReady);
-    socket.on('webrtc_offer', handleOffer);
-    socket.on('webrtc_answer', handleAnswer);
-    socket.on('webrtc_ice_candidate', handleIceCandidate);
+    socket.on('webrtc_ice_candidate', async ({ candidate }) => {
+      if (pcRef.current && candidate) await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(()=>{});
+    });
 
     return () => {
       socket.off('photobooth_update', handlePhotoboothUpdate);
@@ -307,64 +138,35 @@ function Photobooth({
       socket.off('webrtc_answer', handleAnswer);
       socket.off('webrtc_ice_candidate', handleIceCandidate);
     };
-  }, [isP1, roomCode]);
-
-  // Minta state terbaru saat komponen muncul. Kalau satu klien sempat
-  // ketinggalan broadcast (misal refresh/reconnect), state tutorial/frame
-  // tidak akan nyangkut di layar lama.
-  useEffect(() => {
-    socket.emit('init_photobooth_game', { room_code: roomCode });
-  }, [roomCode]);
+  }, [isOfferer, roomCode]);
 
   // ==========================================
-  // KAMERA LOKAL + MULAI HANDSHAKE WEBRTC
+  // START KAMERA & CALL WEBRTC
   // ==========================================
   useEffect(() => {
-    if (phase !== 'shooting') {
-      cleanupMedia();
-      return;
-    }
-
-    let cancelled = false;
-
-    async function startCameraAndWebRTC() {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          console.error("Browser tidak mendukung getUserMedia.");
-          return;
-        }
-
-        let stream = localStreamRef.current;
-        if (!stream) {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 } },
-            audio: false
-          });
-
-          if (cancelled) {
-            stream.getTracks().forEach((track) => track.stop());
-            return;
-          }
+    if (phase === 'shooting') {
+      async function startCameraAndWebRTC() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
           localStreamRef.current = stream;
-        }
 
-        // Pasang local stream ke box milik sendiri
-        const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
-        if (myVideoElem) {
-          myVideoElem.srcObject = stream;
-        }
+          const myVideoElem = isOfferer ? localVideoRef1.current : localVideoRef2.current;
+          if (myVideoElem) myVideoElem.srcObject = stream;
 
-        attachRemoteStream();
+          const remoteVideoElem = isOfferer ? localVideoRef2.current : localVideoRef1.current;
+          if (remoteVideoElem && remoteStreamRef.current.getTracks().length > 0) {
+            remoteVideoElem.srcObject = remoteStreamRef.current;
+          }
 
-        localReadyRef.current = true;
-        createPeerConnection();
+          const pc = createPeerConnection();
 
-        // Beri tahu lawan bahwa kamera kita siap
-        socket.emit('webrtc_ready', { room_code: roomCode, role: myRole });
-
-        // P1 baru membuat offer setelah kamera sendiri + lawan siap
-        if (isP1) {
-          await maybeCreateOffer();
+          if (isOfferer) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('webrtc_offer', { room_code: roomCode, offer: offer });
+          }
+        } catch (err) {
+          console.error("Camera/WebRTC failed (Bisa diabaikan, fallback aman):", err);
         }
 
         // Kalau offer datang lebih dulu sebelum kamera siap, proses sekarang
@@ -376,27 +178,12 @@ function Photobooth({
       } catch (err) {
         console.error("Gagal membuka kamera / WebRTC:", err);
       }
-    }
-
-    startCameraAndWebRTC();
-
-    return () => {
-      cancelled = true;
+      startCameraAndWebRTC();
+    } else {
       cleanupMedia();
-    };
-  }, [phase, isP1]);
-
-  // Saat pindah review -> countdown, elemen <video> dibuat ulang oleh React.
-  // Pasang kembali stream supaya kamera tidak hitam setelah retake/lanjut foto.
-  useEffect(() => {
-    if (phase !== 'shooting' || shootingSubPhase !== 'countdown') return;
-
-    const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
-    if (myVideoElem && localStreamRef.current) {
-      myVideoElem.srcObject = localStreamRef.current;
     }
-    attachRemoteStream();
-  }, [phase, shootingSubPhase, isP1]);
+    return () => cleanupMedia();
+  }, [phase]);
 
   const cleanupMedia = () => {
     if (localStreamRef.current) {
@@ -417,58 +204,35 @@ function Photobooth({
     pendingOfferRef.current = null;
   };
 
+  // ==========================================
+  // GAME LOGIC & TIMERS
+  // ==========================================
   useEffect(() => {
-    if (phase === 'tutorial' && p1Ready && p2Ready) {
-      setPhase('frame_select');
-    }
+    if (phase === 'tutorial' && p1Ready && p2Ready) setPhase('frame_select');
   }, [p1Ready, p2Ready, phase]);
 
-  // Timer Countdown Sesi Foto
   useEffect(() => {
     let timer = null;
     if (phase === 'shooting' && shootingSubPhase === 'countdown') {
-      if (countdown > 0) {
-        timer = setTimeout(() => setCountdown(prev => prev - 1), 1000);
-      } else {
-        triggerSnapPhoto();
-      }
+      if (countdown > 0) timer = setTimeout(() => setCountdown(prev => prev - 1), 1000);
+      else triggerSnapPhoto();
     }
     return () => clearTimeout(timer);
   }, [phase, shootingSubPhase, countdown]);
 
-  // Timer Review
   useEffect(() => {
     let timer = null;
     if (phase === 'shooting' && shootingSubPhase === 'review_snap') {
-      if (reviewTimer > 0) {
-        timer = setTimeout(() => setReviewTimer(prev => prev - 1), 1000);
-      } else if (isP1) {
-        // Hanya host yang auto-lanjut. Kalau dua-duanya auto-lanjut,
-        // server menerima dua aksi next_shot dan foto bisa loncat.
-        triggerNextShotAction();
-      }
+      if (reviewTimer > 0) timer = setTimeout(() => setReviewTimer(prev => prev - 1), 1000);
+      else triggerNextShotAction();
     }
     return () => clearTimeout(timer);
   }, [phase, shootingSubPhase, reviewTimer, isP1]);
 
-  // 4. JEPRET FOTO LOKAL (TANPA SOCKET EMIT BASE64)
-  const drawVideoToCanvas = (video, ctx, width, height) => {
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, width, height);
 
-    if (!video || video.readyState < 2) return;
-
-    try {
-      ctx.save();
-      ctx.translate(width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, width, height);
-      ctx.restore();
-    } catch (err) {
-      console.error("Gagal menggambar video ke canvas:", err);
-    }
-  };
-
+  // ==========================================
+  // SNAPSHOT & STRIP GENERATOR (BULLETPROOF)
+  // ==========================================
   const triggerSnapPhoto = () => {
     if (snappingRef.current) return;
     snappingRef.current = true;
@@ -476,19 +240,29 @@ function Photobooth({
     setIsFlash(true);
     setTimeout(() => setIsFlash(false), 200);
 
-    // Canvas P1 (kiri)
     const canvas1 = document.createElement('canvas');
-    canvas1.width = 640;
-    canvas1.height = 480;
+    canvas1.width = 640; canvas1.height = 480;
     const ctx1 = canvas1.getContext('2d');
-    drawVideoToCanvas(localVideoRef1.current, ctx1, canvas1.width, canvas1.height);
+    
+    ctx1.fillStyle = '#111';
+    ctx1.fillRect(0, 0, canvas1.width, canvas1.height);
+    
+    if (localVideoRef1.current && localVideoRef1.current.readyState >= 2) {
+      ctx1.translate(canvas1.width, 0); ctx1.scale(-1, 1);
+      ctx1.drawImage(localVideoRef1.current, 0, 0, canvas1.width, canvas1.height);
+    }
 
-    // Canvas P2 (kanan)
     const canvas2 = document.createElement('canvas');
-    canvas2.width = 640;
-    canvas2.height = 480;
+    canvas2.width = 640; canvas2.height = 480;
     const ctx2 = canvas2.getContext('2d');
-    drawVideoToCanvas(localVideoRef2.current, ctx2, canvas2.width, canvas2.height);
+    
+    ctx2.fillStyle = '#111';
+    ctx2.fillRect(0, 0, canvas2.width, canvas2.height);
+
+    if (localVideoRef2.current && localVideoRef2.current.readyState >= 2) {
+      ctx2.translate(canvas2.width, 0); ctx2.scale(-1, 1);
+      ctx2.drawImage(localVideoRef2.current, 0, 0, canvas2.width, canvas2.height);
+    }
 
     const snapA = canvas1.toDataURL('image/png');
     const snapB = canvas2.toDataURL('image/png');
@@ -510,16 +284,7 @@ function Photobooth({
     setShootingSubPhase('countdown');
   };
 
-  const triggerRetakeCurrentShot = () => {
-    handleLocalRetakeCurrentShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
-  };
-
-  const handleLocalNextShot = (serverPhotoCount) => {
-    const serverTarget = typeof serverPhotoCount === 'number'
-      ? Math.min(Math.max(serverPhotoCount, 1), 3)
-      : null;
-
+  const handleLocalNextShot = () => {
     setPhotoCount((prevCount) => {
       if (serverTarget === null && prevCount >= 3) {
         setPhase('result');
@@ -534,60 +299,68 @@ function Photobooth({
     });
   };
 
+  const handleLocalRetakeAll = () => {
+    setPhotoCount(1); setCountdown(10); setCapturedPhotos([]);
+    setFinalPhotostripUrl(null); setShootingSubPhase('countdown'); setPhase('shooting');
+  };
+
+  const triggerRetakeCurrentShot = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
+  const triggerNextShotAction = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
+  const triggerRetakeAllAction = () => socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
+
+  // EXECUTE GENERATOR SAAT PHASE RESULT
   useEffect(() => {
-    // Jangan menunggu tepat 3 foto: kalau satu jepretan terlewat karena
-    // tab sempat di-background, photostrip tetap dibuat dari foto yang ada.
-    if (phase === 'result' && capturedPhotos.some(Boolean)) {
+    if (phase === 'result') {
       generateFinalPhotostrip(capturedPhotos, selectedFrame);
     }
   }, [phase, capturedPhotos, selectedFrame]);
 
-  const triggerNextShotAction = () => {
-    handleLocalNextShot();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
-  };
-
-  const handleLocalRetakeAll = () => {
-    snappingRef.current = false;
-    setPhotoCount(1);
-    setCountdown(10);
-    setReviewTimer(5);
-    setCapturedPhotos([]);
-    setFinalPhotostripUrl(null);
-    setShootingSubPhase('countdown');
-    setPhase('shooting');
-  };
-
-  const triggerRetakeAllAction = () => {
-    handleLocalRetakeAll();
-    socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
-  };
-
+  // SAFE DRAW (Mencegah error canvas saat image rusak)
   const drawImageCover = (ctx, img, x, y, targetWidth, targetHeight) => {
+    if (!img || !img.width || !img.height) return; // Murni safety check
     const imgRatio = img.width / img.height;
     const targetRatio = targetWidth / targetHeight;
     let sx, sy, sw, sh;
-
     if (imgRatio > targetRatio) {
-      sh = img.height;
-      sw = img.height * targetRatio;
-      sx = (img.width - sw) / 2;
-      sy = 0;
+      sh = img.height; sw = img.height * targetRatio;
+      sx = (img.width - sw) / 2; sy = 0;
     } else {
-      sw = img.width;
-      sh = img.width / targetRatio;
-      sx = 0;
-      sy = (img.height - sh) / 2;
+      sw = img.width; sh = img.width / targetRatio;
+      sx = 0; sy = (img.height - sh) / 2;
     }
     ctx.drawImage(img, sx, sy, sw, sh, x, y, targetWidth, targetHeight);
   };
 
+  // 🚨 SUPER BULLETPROOF LOAD IMAGE 🚨
+  // Jika gambar butuh waktu > 5 Detik, paksa jadikan null agar gak nahan sistem!
   const loadImage = (src) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = (err) => reject(err);
+    return new Promise((resolve) => {
+      if (!src) return resolve(null);
+      
+      let isResolved = false;
+      const img = new Image(); 
+      img.crossOrigin = 'anonymous'; 
+
+      // Sabuk Pengaman: Timer pembatas 5 detik
+      const safetyTimer = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          resolve(null);
+        }
+      }, 5000);
+
+      img.onload = () => {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(safetyTimer);
+        resolve(img);
+      }; 
+      img.onerror = () => {
+        if (isResolved) return;
+        isResolved = true;
+        clearTimeout(safetyTimer);
+        resolve(null);
+      }; 
       img.src = src;
     });
   };
@@ -595,42 +368,56 @@ function Photobooth({
   const generateFinalPhotostrip = async (snaps, frameObj) => {
     try {
       const canvas = document.createElement('canvas');
-      canvas.width = 600;
-      canvas.height = 1800;
+      canvas.width = 600; canvas.height = 1800;
       const ctx = canvas.getContext('2d');
+      
+      // Berikan warna latar gelap sebagai fallback
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const snapsPromises = Array.from({ length: 3 }, async (_, idx) => {
-        const snap = snaps[idx];
-        if (!snap) return { imgA: null, imgB: null };
-        const imgA = snap.a ? await loadImage(snap.a) : null;
-        const imgB = snap.b ? await loadImage(snap.b) : null;
+      const frameImgPromise = loadImage(frameObj?.src || FRAME_OPTIONS[0].src);
+      
+      // Paksa map berjalan 3 kali agar tidak nyangkut ([0,1,2])
+      const snapsPromises = [0, 1, 2].map(async (i) => {
+        const snap = snaps[i] || {};
+        const imgA = snap?.a ? await loadImage(snap.a) : null;
+        const imgB = snap?.b ? await loadImage(snap.b) : null;
         return { imgA, imgB };
       });
-
-      const [frameImg, loadedSnaps] = await Promise.all([
-        loadImage(frameObj.src).catch(() => null),
-        Promise.all(snapsPromises)
-      ]);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+      
+      const [frameImg, loadedSnaps] = await Promise.all([frameImgPromise, Promise.all(snapsPromises)]);
+      
       const slotYPositions = [75, 531, 987];
-      const photoW = 270;
-      const photoH = 440;
+      const photoW = 270; const photoH = 440;
 
-      loadedSnaps.forEach(({ imgA, imgB }, idx) => {
+      // Sisipkan foto ke dalam slot dengan aman
+      loadedSnaps.forEach((loaded, idx) => {
+        if (!loaded) return;
+        const { imgA, imgB } = loaded;
         const y = slotYPositions[idx];
         if (imgA) drawImageCover(ctx, imgA, 35, y, photoW, photoH);
         if (imgB) drawImageCover(ctx, imgB, 295, y, photoW, photoH);
       });
-
+      
       if (frameImg) ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      
+      // Paksa publish gambar apa pun yg berhasil ter-render
       setFinalPhotostripUrl(canvas.toDataURL('image/png'));
-    } catch (err) {
-      console.error("Gagal membuat photostrip:", err);
+
+    } catch (err) { 
+      // EMERGENCY FALLBACK (Kalau sampai browser ngawur/memori habis)
+      console.error("Terjadi error tak terduga, meluncurkan kanvas darurat:", err); 
+      const emergencyCanvas = document.createElement('canvas');
+      emergencyCanvas.width = 600; emergencyCanvas.height = 1800;
+      const eCtx = emergencyCanvas.getContext('2d');
+      eCtx.fillStyle = '#111'; eCtx.fillRect(0,0,600,1800);
+      setFinalPhotostripUrl(emergencyCanvas.toDataURL('image/png'));
     }
   };
 
+  // ==========================================
+  // BUTTON HANDLERS
+  // ==========================================
   const handleConfirmTutorial = () => {
     if (localReadySent) return;
     setLocalReadySent(true);
@@ -638,6 +425,7 @@ function Photobooth({
   };
 
   const handleProposeFrame = (frame) => {
+    setIProposed(true);
     socket.emit('photobooth_action', { room_code: roomCode, action: 'propose_frame', frame_id: frame.id });
   };
 
@@ -652,12 +440,11 @@ function Photobooth({
       socket.emit('photobooth_action', { room_code: roomCode, action: 'confirm_frame', agreed: true });
     } else {
       setProposedFrame(null);
-      setProposedBy(null);
       socket.emit('photobooth_action', { room_code: roomCode, action: 'confirm_frame', agreed: false });
     }
+    setIProposed(false);
   };
 
-  const proposerName = proposedBy === 'p1' ? player1Name : player2Name;
   const currentSnap = capturedPhotos[photoCount - 1] || {};
 
   return (
@@ -672,25 +459,12 @@ function Photobooth({
             <div className="tutorial-text-content" style={{ fontFamily: 'monospace', fontSize: '0.65rem', textAlign: 'left', lineHeight: '1.4', color: '#fff', margin: '15px 0' }}>
               <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>1. PILIH FRAME BERSAMA</p>
               <p style={{ marginBottom: '10px' }}>Pilih style frame favorit kalian. Temanmu harus setuju sebelum mulai.</p>
-              
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>2. PEMOTRETAN (3 FOTO @ 10 DETIK)</p>
-              <p style={{ marginBottom: '10px' }}>Setiap foto ada timer 10 detik. Posisikan wajah kalian di dalam box dual kamera!</p>
-
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>3. RETAKE SETIAP FOTO</p>
-              <p style={{ marginBottom: '10px' }}>Jika hasil foto kurang bagus, kalian bisa langsung klik [ RETAKE ] di tiap akhir jepretan!</p>
-              
-              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>4. DOWNLOAD PHOTOSTRIP</p>
-              <p>Simpan hasil akhir photostrip langsung ke laptop kamu!</p>
+              <p style={{ color: 'var(--color-cyan)', fontWeight: 'bold' }}>2. WEBRTC LIVE VIDEO</p>
+              <p style={{ marginBottom: '10px' }}>Sekarang kalian bisa melihat satu sama lain secara live saat berpose!</p>
             </div>
-
             <div style={{ marginTop: '20px' }}>
-              <button 
-                className="ttt-action-btn next-btn" 
-                onClick={handleConfirmTutorial}
-                disabled={isCurrentClientReady || localReadySent}
-                style={{ opacity: (isCurrentClientReady || localReadySent) ? 0.5 : 1 }}
-              >
-                {(isCurrentClientReady || localReadySent) ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
+              <button className="ttt-action-btn next-btn" onClick={handleConfirmTutorial} disabled={localReadySent} style={{ opacity: localReadySent ? 0.5 : 1 }}>
+                {localReadySent ? `[ WAITING... ] (${readyCount}/2)` : `[ MENGERTI ] (${readyCount}/2)`}
               </button>
             </div>
           </div>
@@ -703,39 +477,19 @@ function Photobooth({
           <div className="game-over-box" style={{ maxWidth: '400px' }}>
             <h3 className="game-over-title">[ FRAME PROPOSAL ]</h3>
             <p style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: '#fff', margin: '15px 0' }}>
-              {proposedBy === myRole 
-                ? `Kamu mengusulkan frame "${proposedFrame.name}". Menunggu persetujuan teman...`
-                : `${proposerName.toUpperCase()} memilih frame "${proposedFrame.name}". Gunakan bingkai ini?`
-              }
+              {iProposed ? `Kamu mengusulkan frame "${proposedFrame.name}". Menunggu persetujuan teman...` : `${cleanOpponent} memilih frame "${proposedFrame.name}". Gunakan bingkai ini?`}
             </p>
-
             <div style={{ display: 'flex', justifyContent: 'center', margin: '15px 0' }}>
-              <img 
-                src={proposedFrame.src} 
-                alt={proposedFrame.name} 
-                style={{ height: '160px', borderRadius: '4px', border: `2px solid ${proposedFrame.color}` }}
-                onError={(e) => { e.target.style.display = 'none'; }} 
-              />
+              <img src={proposedFrame.src} alt={proposedFrame.name} style={{ height: '160px', borderRadius: '4px', border: `2px solid ${proposedFrame.color}` }} onError={(e) => { e.target.style.display = 'none'; }} />
             </div>
 
-            {proposedBy !== myRole ? (
+            {!iProposed ? (
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '15px' }}>
-                <button className="ttt-action-btn next-btn" onClick={() => handleConfirmFrame(true)}>
-                  [ YES / SETUJU ]
-                </button>
-                <button className="ttt-action-btn exit-btn" onClick={() => handleConfirmFrame(false)}>
-                  [ NO / PILIH LAIN ]
-                </button>
+                <button className="ttt-action-btn next-btn" onClick={() => handleConfirmFrame(true)}>[ YES / SETUJU ]</button>
+                <button className="ttt-action-btn exit-btn" onClick={() => handleConfirmFrame(false)}>[ NO / PILIH LAIN ]</button>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                <p style={{ fontSize: '0.65rem', color: '#ffb703', fontFamily: 'monospace' }}>
-                  [ WAITING FOR CONFIRMATION... ]
-                </p>
-                <button className="ttt-action-btn exit-btn" onClick={() => handleConfirmFrame(false)}>
-                  [ CANCEL ]
-                </button>
-              </div>
+              <p style={{ fontSize: '0.65rem', color: '#ffb703', fontFamily: 'monospace' }}>[ WAITING FOR CONFIRMATION... ]</p>
             )}
           </div>
         </div>
@@ -746,39 +500,21 @@ function Photobooth({
         <div className="gartic-container-box" style={{ width: '100%', boxSizing: 'border-box' }}>
           
           <header className="gartic-header">
-            <div className="gartic-score">
-              <span>PLAYER 1: {player1Name.toUpperCase()}</span>
-            </div>
+            <div className="gartic-score"><span>PLAYER 1: {p1Name}</span></div>
             <div className="gartic-round-info" style={{ textAlign: 'center' }}>
               <div>VIRTUAL PHOTOBOOTH</div>
-              <div style={{ color: '#02c39a', marginTop: '4px', fontSize: '0.7rem' }}>
-                STATUS: {phase.toUpperCase().replace('_', ' ')}
-              </div>
+              <div style={{ color: '#02c39a', marginTop: '4px', fontSize: '0.7rem' }}>STATUS: {phase.toUpperCase().replace('_', ' ')}</div>
             </div>
-            <div className="gartic-score">
-              <span>PLAYER 2: {player2Name.toUpperCase()}</span>
-            </div>
+            <div className="gartic-score"><span>PLAYER 2: {p2Name}</span></div>
           </header>
-
-          <div className="gartic-status-bar">
-            {phase === 'tutorial' && <p className="status-text blink-text">WAITING FOR ALL PLAYERS TO READ TUTORIAL...</p>}
-            {phase === 'frame_select' && <p className="status-text" style={{ color: 'var(--color-cyan)' }}>CHOOSE A FRAME TO CONTINUE</p>}
-            {phase === 'shooting' && <p className="status-text winner-highlight">PHOTO {photoCount} OF 3 - {shootingSubPhase === 'countdown' ? 'GET READY!' : 'PREVIEW & DECIDE'}</p>}
-            {phase === 'result' && <p className="status-text" style={{ color: 'var(--color-cyan)' }}>PHOTOSTRIP READY TO DOWNLOAD!</p>}
-          </div>
 
           <div className="canvas-work-area" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px', minHeight: phase === 'result' ? '520px' : '380px', boxSizing: 'border-box', width: '100%' }}>
             
-            {/* PHASE 1: FRAME SELECT */}
             {phase === 'frame_select' && (
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', flexWrap: 'wrap', width: '100%', maxWidth: '750px' }}>
                   {FRAME_OPTIONS.map((frame) => (
-                    <div 
-                      key={frame.id}
-                      onClick={() => handleProposeFrame(frame)}
-                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '12px', backgroundColor: '#16213e', border: `2px solid ${frame.color}`, borderRadius: '6px', width: '135px', transition: 'transform 0.2s', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}
-                    >
+                    <div key={frame.id} onClick={() => handleProposeFrame(frame)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', padding: '12px', backgroundColor: '#16213e', border: `2px solid ${frame.color}`, borderRadius: '6px', width: '135px', transition: 'transform 0.2s', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>
                       <img src={frame.src} alt={frame.name} style={{ height: '180px', objectFit: 'contain', marginBottom: '10px' }} onError={(e) => { e.target.style.display = 'none'; }} />
                       <span style={{ color: frame.color, fontFamily: 'monospace', fontSize: '0.65rem', textAlign: 'center', fontWeight: 'bold' }}>[ {frame.name} ]</span>
                     </div>
@@ -787,51 +523,33 @@ function Photobooth({
               </div>
             )}
 
-            {/* PHASE 2: SHOOTING (WEBRTC LIVE CAMERA) */}
             {phase === 'shooting' && (
               <div style={{ display: 'flex', gap: '25px', alignItems: 'center', justifyContent: 'center', width: '100%', maxWidth: '800px' }}>
-                
                 <div style={{ flex: '1 1 480px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div style={{ width: '100%', maxWidth: '480px', height: '280px', backgroundColor: '#000', border: '3px solid var(--color-cyan)', borderRadius: '8px', overflow: 'hidden', display: 'flex', position: 'relative', boxShadow: '0 0 15px rgba(76, 201, 240, 0.3)' }}>
                     
                     {shootingSubPhase === 'countdown' ? (
                       <>
-                        {/* BOX PLAYER 1 (KIRI) */}
                         <div style={{ flex: 1, position: 'relative', borderRight: '2px solid #222', overflow: 'hidden', backgroundColor: '#111' }}>
-                          <video 
-                            ref={localVideoRef1} 
-                            autoPlay 
-                            playsInline 
-                            muted={isP1} // Muted khusus stream lokal P1 agar tidak echo
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
-                          />
+                          <video ref={localVideoRef1} autoPlay playsInline muted={isOfferer} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
-                            [ {player1Name.toUpperCase()} {isP1 ? '(YOU)' : ''} ]
+                            [ {p1Name} {isOfferer ? '(YOU)' : ''} ]
                           </div>
                         </div>
-
-                        {/* BOX PLAYER 2 (KANAN) */}
                         <div style={{ flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#111' }}>
-                          <video 
-                            ref={localVideoRef2} 
-                            autoPlay 
-                            playsInline 
-                            muted={!isP1} // Muted khusus stream lokal P2 agar tidak echo
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
-                          />
+                          <video ref={localVideoRef2} autoPlay playsInline muted={!isOfferer} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
-                            [ {player2Name.toUpperCase()} {!isP1 ? '(YOU)' : ''} ]
+                            [ {p2Name} {!isOfferer ? '(YOU)' : ''} ]
                           </div>
                         </div>
                       </>
                     ) : (
-                      /* REVIEW SNAPSHOT HASIL JEPRETAN */
                       <div style={{ display: 'flex', width: '100%', height: '100%', backgroundColor: '#111' }}>
                         <div style={{ width: '50%', height: '100%', borderRight: '1px solid #222', position: 'relative' }}>
-                           {currentSnap.a ? <img src={currentSnap.a} alt="Snap A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>LOADING...</div>}
+                           {currentSnap.a ? <img src={currentSnap.a} alt="Snap A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>NO IMAGE</div>}
                         </div>
                         <div style={{ width: '50%', height: '100%', position: 'relative' }}>
-                           {currentSnap.b ? <img src={currentSnap.b} alt="Snap B" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>LOADING...</div>}
+                           {currentSnap.b ? <img src={currentSnap.b} alt="Snap B" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555', fontSize: '0.6rem' }}>NO IMAGE</div>}
                         </div>
                       </div>
                     )}
@@ -841,7 +559,6 @@ function Photobooth({
                   </p>
                 </div>
 
-                {/* SIDEBAR PANEL TIMING & ACTIONS */}
                 <div style={{ width: '230px', display: 'flex', flexDirection: 'column', alignItems: 'center', backgroundColor: '#111827', border: '2px solid var(--color-cyan)', borderRadius: '8px', padding: '20px 15px', boxShadow: '0 4px 12px rgba(0,0,0,0.6)' }}>
                   <div style={{ fontSize: '0.7rem', color: '#8d99ae', fontFamily: 'monospace', marginBottom: '5px' }}>POSING SESSION</div>
                   <div style={{ fontSize: '1.2rem', color: '#02c39a', fontFamily: 'monospace', fontWeight: 'bold', marginBottom: '15px' }}>FOTO {photoCount} / 3</div>
@@ -858,18 +575,10 @@ function Photobooth({
                       <button onClick={triggerNextShotAction} className="ttt-action-btn next-btn" style={{ width: '100%', padding: '8px 5px', fontSize: '0.6rem' }}>{photoCount < 3 ? '[ LANJUT FOTO ' + (photoCount + 1) + ' ]' : '[ LIHAT HASIL AKHIR ]'} ({reviewTimer}s)</button>
                     </>
                   )}
-
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-                    {[0, 1, 2].map((idx) => (
-                      <div key={idx} style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: idx < photoCount - 1 ? '#02c39a' : (idx === photoCount - 1 ? '#F72585' : '#333'), border: '1px solid #555' }} />
-                    ))}
-                  </div>
                 </div>
-
               </div>
             )}
 
-            {/* PHASE 3: RESULT PHOTOSTRIP */}
             {phase === 'result' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px', width: '100%' }}>
                 {finalPhotostripUrl ? (
@@ -879,7 +588,7 @@ function Photobooth({
                     </div>
                     <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                       <a href={finalPhotostripUrl} download={`Photostrip_${selectedFrame.id}.png`} className="ttt-action-btn next-btn" style={{ textDecoration: 'none', padding: '10px 15px', display: 'inline-block' }}>[ DOWNLOAD PHOTOSTRIP ]</a>
-                      <button onClick={triggerRetakeAllAction} className="ttt-action-btn exit-btn" style={{ padding: '10px 15px' }}>[ RETAKE ]</button>
+                      <button onClick={triggerRetakeAllAction} className="ttt-action-btn exit-btn" style={{ padding: '10px 15px' }}>[ RETAKE ALL ]</button>
                     </div>
                   </>
                 ) : (
