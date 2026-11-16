@@ -91,6 +91,12 @@ if (authMode === "register") {
 
 localStorage.setItem("token", tokenData.access_token);
 
+// Kalau sebelumnya sudah ada socket yang terhubung sebagai user lain,
+// putuskan dulu supaya server mencatat username yang baru (bukan user lama).
+if (socket.connected) {
+  socket.disconnect();
+}
+
 socket.auth = {
   token: tokenData.access_token
 };
@@ -100,9 +106,7 @@ socket.once("connected_success", (msg) => {
   console.log(msg);
 });
 
-if (!socket.connected) {
-  socket.connect();
-}
+socket.connect();
 
 onAuthSuccess(username);
 

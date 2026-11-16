@@ -2,15 +2,37 @@ import React, { useState, useEffect, useRef } from 'react';
 import ChatBox from './ChatBox';
 import { socket } from '../socket';
 
-function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
-  // 1. DETERMINASI ROLE P1 DAN P2 SECARA KONSISTEN DI KEDUA LAPTOP
-  const p1Determined = initialGameState?.p1_name || initialGameState?.p1 || 
-    (currentUser && opponentName ? (currentUser < opponentName ? currentUser : opponentName) : currentUser);
+const sameUser = (a, b) =>
+  String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
 
-  const player1Name = p1Determined || "P1";
-  const player2Name = (player1Name === currentUser ? opponentName : currentUser) || "P2";
+const findScore = (scores, name) => {
+  if (!scores || !name) return undefined;
+  const key = Object.keys(scores).find((k) => sameUser(k, name));
+  return key !== undefined ? scores[key] : undefined;
+};
 
-  const isP1 = currentUser === player1Name;
+function Gartic({
+  currentUser,
+  opponentName,
+  roomCode,
+  player1Name: player1Prop,
+  player2Name: player2Prop,
+  initialGameState,
+  onBackToDashboard
+}) {
+  // 1. ROLE P1/P2 HARUS MENGIKUTI URUTAN SERVER (host dulu, lalu joiner).
+  //    Jangan menebak dari urutan alfabet username, karena bisa kebalik.
+  const fallbackP1 = currentUser && opponentName
+    ? (String(currentUser).toUpperCase() < String(opponentName).toUpperCase() ? currentUser : opponentName)
+    : (currentUser || 'P1');
+
+  const player1Name =
+    player1Prop || initialGameState?.p1_name || initialGameState?.p1 || fallbackP1;
+  const player2Name =
+    player2Prop || initialGameState?.p2_name || initialGameState?.p2 ||
+    (sameUser(player1Name, currentUser) ? opponentName : currentUser) || 'P2';
+
+  const isP1 = sameUser(currentUser, player1Name);
   const myRole = isP1 ? 'p1' : 'p2';
 
   // STATE PENJAGA SPAM KLIK
@@ -18,7 +40,10 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
 
   // GAME STATE UTAMA
   const [round, setRound] = useState(initialGameState?.round || 1);
-  const [scores, setScores] = useState(initialGameState?.scores || { p1: 0, p2: 0 });
+  const [scores, setScores] = useState({
+    p1: initialGameState?.p1_score ?? findScore(initialGameState?.scores, player1Name) ?? 0,
+    p2: initialGameState?.p2_score ?? findScore(initialGameState?.scores, player2Name) ?? 0,
+  });
   const [phase, setPhase] = useState(initialGameState?.phase || 'tutorial'); 
   const [isGameOver, setIsGameOver] = useState(initialGameState?.is_game_over || false);
   const [timer, setTimer] = useState(initialGameState?.timer || 0); 
@@ -30,15 +55,22 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
 
   // KATA RAHASIA & STATUS JAWABAN
   const [secretWord, setSecretWord] = useState(initialGameState?.secret_word || '');
+  const [wordLength, setWordLength] = useState(initialGameState?.word_length || 0);
   const [customWordInput, setCustomWordInput] = useState('');
   const [hasGuessedCorrectly, setHasGuessedCorrectly] = useState(initialGameState?.has_guessed || false);
 
-  // LOGIKA PEMILIHAN DRAWER BERDASARKAN ROLE KONSISTEN
-  const drawerId = round % 2 !== 0 ? 'p1' : 'p2';
-  const drawerName = drawerId === 'p1' ? player1Name : player2Name;
-  const isMeDrawer = currentUser === drawerName;
+  // LOGIKA PEMILIHAN DRAWER: pakai current_drawer dari server kalau ada
+  const drawerName =
+    initialGameState?.current_drawer ||
+    (round % 2 !== 0 ? player1Name : player2Name);
+  const currentDrawer = initialGameState?.current_drawer || drawerName;
+  const [serverDrawer, setServerDrawer] = useState(currentDrawer);
 
-  const isMeReady = readyPlayers.includes(currentUser) || (isP1 ? p1Ready : p2Ready);
+  const resolvedDrawerName = serverDrawer || drawerName;
+  const drawerLabel = sameUser(resolvedDrawerName, player1Name) ? player1Name : player2Name;
+  const isMeDrawer = sameUser(currentUser, resolvedDrawerName);
+
+  const isMeReady = readyPlayers.some((p) => sameUser(p, currentUser)) || (isP1 ? p1Ready : p2Ready);
   const readyCount = readyPlayers.length > 0 ? readyPlayers.length : ((p1Ready ? 1 : 0) + (p2Ready ? 1 : 0));
 
   // CANVAS SETTINGS & REFS
@@ -63,9 +95,15 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
       if (gameState.timer !== undefined) setTimer(gameState.timer);
       if (gameState.is_game_over !== undefined) setIsGameOver(gameState.is_game_over);
       if (gameState.secret_word !== undefined) setSecretWord(gameState.secret_word || '');
+      if (gameState.word_length !== undefined) setWordLength(gameState.word_length || 0);
       if (gameState.has_guessed !== undefined) setHasGuessedCorrectly(gameState.has_guessed || false);
+      if (gameState.current_drawer) setServerDrawer(gameState.current_drawer);
       
-      if (gameState.scores) setScores(gameState.scores);
+      setScores({
+        p1: gameState.p1_score ?? findScore(gameState.scores, player1Name) ?? 0,
+        p2: gameState.p2_score ?? findScore(gameState.scores, player2Name) ?? 0,
+      });
+
       if (gameState.ready_players) setReadyPlayers(gameState.ready_players);
       if (gameState.p1_ready !== undefined) setP1Ready(gameState.p1_ready);
       if (gameState.p2_ready !== undefined) setP2Ready(gameState.p2_ready);
@@ -76,8 +114,6 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
     });
 
     socket.on('gartic_draw_receive', (data) => {
-      if (isMeDrawer) return; // Penggambar tidak perlu menggambar ulang apa yang dikirim sendiri
-      
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (!ctx || !canvas) return;
@@ -103,7 +139,13 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
       socket.off('gartic_update');
       socket.off('gartic_draw_receive');
     };
-  }, [isMeDrawer]);
+  }, [player1Name, player2Name]);
+
+  // Minta state Gartic saat komponen muncul. Ini yang sebelumnya tidak pernah
+  // dipanggil, sehingga backend tidak punya game dan tombol [MENGERTI] stuck.
+  useEffect(() => {
+    socket.emit('init_gartic_game', { room_code: roomCode });
+  }, [roomCode]);
 
   // TIMER COUNTDOWN LOKAL
   useEffect(() => {
@@ -235,7 +277,11 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
 
   const renderWordHint = () => {
     if (round === 3 || round === 4) return "MISTERI (FREE ROUND)";
-    if (!secretWord) return "...";
+    if (!secretWord) {
+      return wordLength > 0
+        ? Array.from({ length: wordLength }, () => '_').join(' ')
+        : "...";
+    }
     return secretWord.split('').map(() => '_ ').join('');
   };
 
@@ -318,13 +364,13 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
 
           <div className="gartic-status-bar">
             {phase === 'setup' && (
-              <p className="status-text blink-text">WAITING FOR {drawerName.toUpperCase()} TO CHOOSE A WORD...</p>
+              <p className="status-text blink-text">WAITING FOR {drawerLabel.toUpperCase()} TO CHOOSE A WORD...</p>
             )}
             {phase === 'drawing' && (
               <p className="status-text" style={{ color: 'var(--color-cyan)' }}>
                 {isMeDrawer 
                   ? `YOUR TURN TO DRAW! KATA: ${secretWord}` 
-                  : `${drawerName.toUpperCase()} IS DRAWING... PREPARE YOURSELF!`
+                  : `${drawerLabel.toUpperCase()} IS DRAWING... PREPARE YOURSELF!`
                 }
               </p>
             )}
@@ -369,9 +415,27 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
                 )}
               </div>
             ) : (
-              <>
-                {phase === 'drawing' && !isMeDrawer ? (
-                  <div className="canvas-hidden-overlay">
+              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                {/* Canvas HARUS tetap ter-mount walaupun penebak belum boleh melihat.
+                    Kalau di-unmount, coretan yang dikirim selama fase drawing hilang
+                    dan penebak hanya melihat kanvas kosong saat fase guessing. */}
+                <canvas
+                  ref={canvasRef}
+                  width={500}
+                  height={320}
+                  className={`gartic-canvas ${phase !== 'drawing' || !isMeDrawer ? 'canvas-locked' : ''}`}
+                  onPointerDown={startDrawing}
+                  onPointerMove={draw}
+                  onPointerUp={stopDrawing}
+                  onPointerLeave={stopDrawing}
+                  style={{ touchAction: 'none' }}
+                />
+
+                {phase === 'drawing' && !isMeDrawer && (
+                  <div
+                    className="canvas-hidden-overlay"
+                    style={{ position: 'absolute', inset: 0 }}
+                  >
                     <div className="pixel-lock-box">
                       <div className="lock-inner-line"></div>
                       <span>DRAWING LOCKED</span>
@@ -380,20 +444,8 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
                       THE DRAWING WILL BE REVEALED IN THE NEXT GUESSING TIME!
                     </p>
                   </div>
-                ) : (
-                  <canvas
-                    ref={canvasRef}
-                    width={500}
-                    height={320}
-                    className={`gartic-canvas ${phase !== 'drawing' || !isMeDrawer ? 'canvas-locked' : ''}`}
-                    onPointerDown={startDrawing}
-                    onPointerMove={draw}
-                    onPointerUp={stopDrawing}
-                    onPointerLeave={stopDrawing}
-                    style={{ touchAction: 'none' }}
-                  />
                 )}
-              </>
+              </div>
             )}
           </div>
 
@@ -429,7 +481,7 @@ function Gartic({ currentUser, opponentName, roomCode, initialGameState, onBackT
           </div>
         </div>
 
-        <ChatBox currentUser={currentUser} gameRoomId={roomCode} onSendMessage={handleChatSendMessage} gameType="GARTIC" />
+        <ChatBox currentUser={currentUser} gameRoomId={roomCode} onSendMessage={handleChatSendMessage} />
       </div>
     </div>
   );

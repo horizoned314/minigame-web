@@ -2,6 +2,8 @@
 import asyncio
 import random
 
+from sockets.state_manager import state
+
 # Kata rahasia bawaan server untuk Ronde 1 & 2
 DEFAULT_WORD_BANK = [
     "PIZZA", "ROKET", "PENGUIN", "GITROW", "KUCING", "TELEVISI", 
@@ -42,17 +44,41 @@ class GarticRoom:
             "phase": self.phase,
             "is_game_over": self.is_game_over,
             "timer": self.timer,
-            "ready_players": self.ready_players,
+            "ready_players": list(self.ready_players),
             "p1_ready": self.p1 in self.ready_players,
             "p2_ready": self.p2 in self.ready_players,
             "secret_word": self.secret_word,
+            "word_length": len(self.secret_word),
             "has_guessed": self.has_guessed,
-            "should_clear_canvas": should_clear_canvas
+            "should_clear_canvas": should_clear_canvas,
+
+            # Identitas pemain: frontend TIDAK boleh menebak urutan p1/p2 sendiri,
+            # karena urutan server adalah host lalu joiner.
+            "p1_name": self.p1,
+            "p2_name": self.p2,
+            "p1_score": self.scores.get(self.p1, 0),
+            "p2_score": self.scores.get(self.p2, 0),
+            "current_drawer": self.current_drawer,
+            "current_guesser": self.current_guesser,
         }
 
     async def broadcast_state(self, should_clear_canvas=False):
-        """Mengirim pembaruan state ke kedua pemain di dalam room"""
-        await self.sio.emit('gartic_update', self.get_state(should_clear_canvas), room=self.room_code)
+        """
+        Mengirim pembaruan state ke kedua pemain di dalam room.
+        Kata rahasia hanya boleh diterima oleh penggambar selama fase
+        drawing/guessing supaya penebak tidak bisa curang lewat DevTools.
+        """
+        base_state = self.get_state(should_clear_canvas)
+
+        for username in (self.p1, self.p2):
+            player_state = dict(base_state)
+
+            if username != self.current_drawer and self.phase in ('drawing', 'guessing', 'setup'):
+                player_state["secret_word"] = ""
+
+            sid = state.online_users.get(username)
+            if sid:
+                await self.sio.emit('gartic_update', player_state, to=sid)
 
     def set_drawer_and_guesser(self):
         """Mengatur siapa yang menggambar berdasarkan angka ronde"""
@@ -65,6 +91,10 @@ class GarticRoom:
 
     async def player_ready(self, username):
         """Dipanggil saat tombol [MENGERTI] di tutorial ditekan"""
+        # Jangan proses ready kalau tutorial sudah lewat (mencegah ronde restart ganda)
+        if self.phase != 'tutorial':
+            return
+
         if username not in self.ready_players:
             self.ready_players.append(username)
             await self.broadcast_state()
@@ -72,12 +102,20 @@ class GarticRoom:
             # Jika kedua pemain sudah siap, mulai ronde 1
             if len(self.ready_players) >= 2:
                 await asyncio.sleep(0.5)
+
+                # Pastikan room masih punya dua pemain. Kalau salah satu
+                # disconnect selama jeda, jangan memulai ronde di room kosong.
+                room = state.active_rooms.get(self.room_code)
+                if not room or len(room.get("players", [])) < 2:
+                    return
+
                 await self.start_new_round()
 
     async def start_new_round(self):
         """Memulai ronde baru (atau mengakhiri permainan jika sudah ronde > 4)"""
         if self.round > 4:
             self.is_game_over = True
+            self.phase = 'game_over'
             await self.broadcast_state()
             return
 
@@ -157,6 +195,11 @@ class GarticRoom:
 
     async def end_round(self):
         """Fase transisi setelah ronde habis/berhasil ditebak"""
+        # Timer dan tebakan bisa selesai hampir bersamaan. Guard ini mencegah
+        # end_round dijalankan dua kali (dua timer transisi sekaligus).
+        if self.phase != 'guessing':
+            return
+
         if self.timer_task:
             self.timer_task.cancel()
 
@@ -171,6 +214,10 @@ class GarticRoom:
 
     async def advance_round(self):
         """Maju ke ronde berikutnya"""
+        # Pastikan transisi hanya terjadi sekali.
+        if self.phase != 'round_over':
+            return
+
         self.round += 1
         await self.start_new_round()
 

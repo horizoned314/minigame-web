@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { socket } from '../socket';
 
-// 1. Tambahkan prop onSendMessage dan gameType di sini
-function ChatBox({ currentUser, gameRoomId, onSendMessage, gameType }) {
+// ChatBox menerima onSendMessage kalau game punya jalur chat sendiri (Gartic),
+// supaya pesan tidak terkirim dua kali lewat event yang berbeda.
+function ChatBox({ currentUser, gameRoomId, onSendMessage }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
@@ -11,7 +12,7 @@ function ChatBox({ currentUser, gameRoomId, onSendMessage, gameType }) {
     // Ambil histori chat saat komponen pertama kali muncul
     socket.emit('get_chat_history', { room_code: gameRoomId }, (res) => {
       if (res && res.status === 'success') {
-        setMessages(res.history);
+        setMessages(res.history || []);
       }
     });
 
@@ -32,32 +33,22 @@ function ChatBox({ currentUser, gameRoomId, onSendMessage, gameType }) {
 
   const handleSendMessage = (e) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    const text = inputText.trim();
+    if (!text) return;
 
-    // 2. HUBUNGKAN KE GARTIC: Lempar teks ke fungsi checker di Gartic.jsx
     if (onSendMessage) {
-      onSendMessage(inputText);
-    }
-
-    // Kirim ke backend melalui socket (untuk Tic Tac Toe & Gartic asli nanti)
-    socket.emit('send_message', {
-      room_code: gameRoomId,
-      message: inputText
-    }, (res) => {
-      if (res && res.status !== 'success') {
-        console.error('Gagal kirim pesan:', res.message);
-      }
-    });
-
-    // 🛠️ HACK KHUSUS LOCAL TESTING GARTIC:
-    // Karena backend Gartic belum ada untuk membalas 'receive_message',
-    // kita masukkan pesannya langsung ke layar secara lokal agar kamu bisa melihat tebakanmu sendiri.
-    if (gameType === 'GARTIC') {
-      const mockPayload = {
-        sender: currentUser,
-        message: inputText
-      };
-      setMessages((prev) => [...prev, mockPayload]);
+      // Game-specific chat (Gartic): server akan broadcast ke kedua pemain
+      onSendMessage(text);
+    } else {
+      // Chat biasa (Tic Tac Toe)
+      socket.emit('send_message', {
+        room_code: gameRoomId,
+        message: text
+      }, (res) => {
+        if (res && res.status !== 'success') {
+          console.error('Gagal kirim pesan:', res.message);
+        }
+      });
     }
 
     setInputText('');
@@ -70,15 +61,20 @@ function ChatBox({ currentUser, gameRoomId, onSendMessage, gameType }) {
       </div>
 
       <div className="chat-messages-area">
-        {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`chat-bubble ${msg.sender.toUpperCase() === currentUser.toUpperCase() ? 'chat-me' : 'chat-others'}`}
-          >
-            <span className="chat-sender">[{msg.sender.toUpperCase()}]</span>
-            <p className="chat-text">{msg.message}</p>
-          </div>
-        ))}
+        {messages.map((msg, idx) => {
+          const messageText = msg.message ?? msg.text ?? '';
+          const sender = String(msg.sender || 'SYSTEM');
+
+          return (
+            <div
+              key={idx}
+              className={`chat-bubble ${sender.toUpperCase() === String(currentUser).toUpperCase() ? 'chat-me' : 'chat-others'}`}
+            >
+              <span className="chat-sender">[{sender.toUpperCase()}]</span>
+              <p className="chat-text">{messageText}</p>
+            </div>
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

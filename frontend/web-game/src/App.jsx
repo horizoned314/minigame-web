@@ -8,40 +8,109 @@ import TicTacToe from './components/TicTacToe';
 import Gartic from './components/Gartic';
 import Photobooth from './components/Photobooth';
 
+// Satu-satunya tempat pemetaan game_type -> layar.
+// Jangan pernah fallback diam-diam ke Tic Tac Toe, karena itu yang bikin
+// undangan Gartic/Photobooth malah membuka Tic Tac Toe.
+const GAME_TYPE_ALIASES = {
+  tictactoe: 'tictactoe',
+  tic_tac_toe: 'tictactoe',
+  'tic-tac-toe': 'tictactoe',
+  ttt: 'tictactoe',
+  gartic: 'gartic',
+  photobooth: 'photobooth',
+  photo_booth: 'photobooth',
+  'photo-booth': 'photobooth',
+};
+
+const SCREEN_BY_GAME_TYPE = {
+  tictactoe: 'ttt',
+  gartic: 'gartic',
+  photobooth: 'photobooth',
+};
+
+function normalizeGameType(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return GAME_TYPE_ALIASES[key] || null;
+}
+
+const sameUser = (a, b) =>
+  String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
+
 function App() {
-  // 1. DIKEMBALIKAN KE 'start' (Bukan 'photobooth' lagi)
-  const [screen, setScreen] = useState('start'); 
-  const [authMode, setAuthMode] = useState(''); 
+  const [screen, setScreen] = useState('start');
+  const [authMode, setAuthMode] = useState('');
   const [currentUser, setCurrentUser] = useState('');
 
-  const [opponent, setOpponent] = useState(''); 
+  const [opponent, setOpponent] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [initialGameState, setInitialGameState] = useState(null);
+  const [player1Name, setPlayer1Name] = useState('');
+  const [player2Name, setPlayer2Name] = useState('');
 
-  // EFFECT SOCKET: Menangkap sinyal start game dari backend
+  // ==========================================
+  // SATU LISTENER UNTUK SEMUA GAME ROUTING
+  // (sebelumnya App dan Dashboard sama-sama punya listener,
+  //  sehingga event bisa saling menimpa dan salah pindah layar)
+  // ==========================================
   useEffect(() => {
-    socket.on("game_start", (data) => {
-      console.log("GAME START VIA SOCKET", data);
+    const handleGameStart = (payload) => {
+      const data = payload || {};
+      const gameType = normalizeGameType(data.game_type || data.game || data.type);
 
-      setRoomCode(data.room_code);
-
-      const opp = data.players?.find((p) => p !== currentUser) || "";
-      setOpponent(opp);
-
-      // Cek kiriman jenis game dari backend
-      if (data.game === 'gartic' || data.game_type === 'gartic') {
-        setScreen("gartic");
-      } else if (data.game === 'photobooth' || data.game_type === 'photobooth') {
-        setScreen("photobooth");
-      } else {
-        setScreen("ttt"); // Default ke Tic Tac Toe
+      if (!gameType) {
+        console.error('[ROUTING] game_type tidak dikenal:', data);
+        return;
       }
-    });
+
+      const players = Array.isArray(data.players) ? data.players : [];
+      const p1 = data.p1_name || players[0] || '';
+      const p2 = data.p2_name || players[1] || '';
+
+      const opponentName =
+        players.find((p) => !sameUser(p, currentUser)) ||
+        (sameUser(p1, currentUser) ? p2 : p1) ||
+        'OPPONENT';
+
+      const stateKey = `${gameType}_state`;
+      const gameState = data[stateKey] || data.game_state || {};
+
+      setRoomCode(data.room_code || '');
+      setOpponent(opponentName);
+      setPlayer1Name(p1);
+      setPlayer2Name(p2);
+      setInitialGameState({
+        ...gameState,
+        p1_name: gameState.p1_name || p1,
+        p2_name: gameState.p2_name || p2,
+        players,
+      });
+
+      setScreen(SCREEN_BY_GAME_TYPE[gameType]);
+    };
+
+    const handleOpponentLeft = (payload) => {
+      const data = payload || {};
+      // Hanya reaksi kalau kita masih berada di room yang sama
+      if (roomCode && data.room_code && data.room_code !== roomCode) {
+        return;
+      }
+
+      setRoomCode('');
+      setOpponent('');
+      setPlayer1Name('');
+      setPlayer2Name('');
+      setInitialGameState(null);
+      setScreen('dashboard');
+    };
+
+    socket.on('trigger_game_start', handleGameStart);
+    socket.on('opponent_left', handleOpponentLeft);
 
     return () => {
-      socket.off("game_start");
+      socket.off('trigger_game_start', handleGameStart);
+      socket.off('opponent_left', handleOpponentLeft);
     };
-  }, [currentUser]);
+  }, [currentUser, roomCode]);
 
   const handleNewGame = () => {
     setAuthMode('register');
@@ -58,27 +127,30 @@ function App() {
     setScreen('dashboard');
   };
 
+  const clearRoom = () => {
+    setRoomCode('');
+    setOpponent('');
+    setPlayer1Name('');
+    setPlayer2Name('');
+    setInitialGameState(null);
+  };
+
   const handleBackToMenu = () => {
+    if (roomCode) {
+      socket.emit('leave_room', { room_code: roomCode });
+    }
+    socket.disconnect();
+    localStorage.removeItem('token');
+    clearRoom();
     setCurrentUser('');
     setScreen('start');
   };
 
-  const handleStartGame = (opponentName, currentRoomCode, gameState, gameType = 'ttt') => {
-    setOpponent(opponentName);
-    setRoomCode(currentRoomCode);
-    setInitialGameState(gameState);
-    
-    // Cek halaman mana yang harus dibuka
-    if (gameType === 'gartic') {
-      setScreen('gartic');
-    } else if (gameType === 'photobooth') {
-      setScreen('photobooth');
-    } else {
-      setScreen('ttt');
-    }
-  };
-
   const handleBackToDashboard = () => {
+    if (roomCode) {
+      socket.emit('leave_room', { room_code: roomCode });
+    }
+    clearRoom();
     setScreen('dashboard');
   };
 
@@ -103,13 +175,12 @@ function App() {
         <Dashboard 
           currentUser={currentUser} 
           onLogout={handleBackToMenu} 
-          onStartGame={handleStartGame} 
         />
       )}
 
-      {/* RENDER SCREEN TIC TAC TOE */}
       {screen === 'ttt' && (
         <TicTacToe 
+          key={roomCode || 'ttt'}
           currentUser={currentUser}      
           opponentName={opponent} 
           roomCode={roomCode}
@@ -118,29 +189,33 @@ function App() {
         />
       )}
 
-      {/* RENDER SCREEN GARTIC */}
       {screen === 'gartic' && (
         <Gartic 
+          key={roomCode || 'gartic'}
           currentUser={currentUser}
           opponentName={opponent}
           roomCode={roomCode}
+          player1Name={player1Name}
+          player2Name={player2Name}
           initialGameState={initialGameState}
           onBackToDashboard={handleBackToDashboard}
         />
       )}
 
-      {/* RENDER SCREEN PHOTOBOOTH */}
       {screen === 'photobooth' && (
         <Photobooth 
+          key={roomCode || 'photobooth'}
           currentUser={currentUser} 
           opponentName={opponent} 
           roomCode={roomCode} 
+          player1Name={player1Name}
+          player2Name={player2Name}
           initialGameState={initialGameState}
           onBackToDashboard={handleBackToDashboard}
         />
       )}
     </div>
-  ); 
+  );
 }
 
 export default App;

@@ -42,5 +42,16 @@ async def connect(sid, environ, auth):
 async def disconnect(sid):
     """Dipanggil saat klien terputus (close browser, refresh, internet mati)."""
     username = state.remove_user(sid)
-    if username:
-        print(f"🔴 User Terputus: {username} (SID: {sid})")
+    if not username:
+        return
+
+    # Local import untuk menghindari circular import saat startup
+    from sockets.invite_flow import cleanup_user_rooms
+
+    # Bersihkan semua room/game yang mencatat user ini supaya tidak ada state nyangkut
+    try:
+        await cleanup_user_rooms(sid, username)
+    except Exception as exc:
+        print(f"⚠️ Gagal membersihkan room untuk {username}: {exc}")
+
+    print(f"🔴 User Terputus: {username} (SID: {sid})")
