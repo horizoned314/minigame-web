@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { socket } from '../socket';
+import { API_BASE_URL, socket } from '../socket';
 
 const FRAME_OPTIONS = [
   { id: 'pink', name: 'PASTEL PINK', src: '/frames/frame-pink.png', color: '#ffb3c1' },
@@ -12,16 +12,6 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN publik untuk membantu koneksi antar jaringan/NAT yang berbeda
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
   ],
   iceCandidatePoolSize: 4,
 };
@@ -71,6 +61,7 @@ function Photobooth({
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
   const pcRef = useRef(null);
+  const iceServersRef = useRef(ICE_SERVERS);
 
   // Penanda handshake WebRTC
   const localReadyRef = useRef(false);
@@ -79,6 +70,16 @@ function Photobooth({
   const remoteDescSetRef = useRef(false);
   const pendingCandidatesRef = useRef([]);
   const pendingOfferRef = useRef(null);
+  const processingOfferRef = useRef(false);
+  const offerRetryRef = useRef(null);
+
+  // Penanda aksi lokal untuk membuang echo dari backend lama yang
+  // membroadcast aksi ke kedua pemain (termasuk pengirim).
+  const lastLocalActionRef = useRef({ action: null, at: 0 });
+
+  const [remoteConnected, setRemoteConnected] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
 
   const [photoCount, setPhotoCount] = useState(initialGameState?.photo_count || 1);
   const [countdown, setCountdown] = useState(10);
@@ -110,6 +111,37 @@ function Photobooth({
     if (remoteVideoElem && remoteVideoElem.srcObject !== remoteStreamRef.current) {
       remoteVideoElem.srcObject = remoteStreamRef.current;
     }
+  };
+
+  const clearOfferRetry = () => {
+    if (offerRetryRef.current) {
+      clearInterval(offerRetryRef.current);
+      offerRetryRef.current = null;
+    }
+  };
+
+  // Kirim ulang offer secara berkala sampai answer datang. Ini penting karena
+  // backend lama tidak meneruskan event `webrtc_ready`, dan offer pertama bisa
+  // tiba sebelum komponen lawan selesai mount.
+  const startOfferRetry = (offer) => {
+    clearOfferRetry();
+    const startedAt = Date.now();
+
+    offerRetryRef.current = setInterval(() => {
+      if (
+        remoteDescSetRef.current ||
+        !pcRef.current ||
+        Date.now() - startedAt > 20000
+      ) {
+        clearOfferRetry();
+        return;
+      }
+
+      socket.emit('webrtc_offer', {
+        room_code: roomCode,
+        offer: pcRef.current.localDescription || offer
+      });
+    }, 1500);
   };
 
   const addLocalTracks = (pc) => {
@@ -149,7 +181,7 @@ function Photobooth({
       return pcRef.current;
     }
 
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+    const pc = new RTCPeerConnection(iceServersRef.current);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -171,7 +203,17 @@ function Photobooth({
         if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
       }
 
+      setRemoteConnected(true);
       attachRemoteStream();
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        setRemoteConnected(true);
+      } else if (pc.connectionState === 'failed') {
+        console.error("WebRTC connection failed");
+        setRemoteConnected(false);
+      }
     };
 
     addLocalTracks(pc);
@@ -181,7 +223,7 @@ function Photobooth({
 
   const maybeCreateOffer = async () => {
     if (!isP1 || offerSentRef.current) return;
-    if (!localReadyRef.current || !remoteReadyRef.current) return;
+    if (!localReadyRef.current) return;
 
     try {
       const pc = createPeerConnection();
@@ -194,6 +236,10 @@ function Photobooth({
         room_code: roomCode,
         offer
       });
+
+      // Tetap kirim ulang sampai ada answer. Jangan bergantung pada
+      // `webrtc_ready` karena backend versi lama belum meneruskan event itu.
+      startOfferRetry(offer);
     } catch (err) {
       offerSentRef.current = false;
       console.error("Gagal membuat WebRTC offer:", err);
@@ -204,10 +250,16 @@ function Photobooth({
   const processOffer = async (offer) => {
     if (!offer) return;
 
+    // Offer retry bisa datang berkali-kali. Setelah answer terpasang,
+    // offer duplikat harus diabaikan.
+    if (remoteDescSetRef.current || processingOfferRef.current) return;
+
     if (!localStreamRef.current) {
       pendingOfferRef.current = offer;
       return;
     }
+
+    processingOfferRef.current = true;
 
     try {
       const pc = createPeerConnection();
@@ -225,6 +277,8 @@ function Photobooth({
       });
     } catch (err) {
       console.error("Gagal memproses WebRTC offer:", err);
+    } finally {
+      processingOfferRef.current = false;
     }
   };
 
@@ -232,6 +286,11 @@ function Photobooth({
   // SOCKET LISTENERS (ROOM UPDATE & WEBRTC SIGNALING)
   // ==========================================
   useEffect(() => {
+    const isLocalActionEcho = (action) => {
+      const last = lastLocalActionRef.current;
+      return last.action === action && Date.now() - last.at < 3000;
+    };
+
     const handlePhotoboothUpdate = (data) => {
       if (data.phase) setPhase(data.phase);
       if (data.p1_ready !== undefined) setP1Ready(data.p1_ready);
@@ -242,8 +301,13 @@ function Photobooth({
       if (data.proposed_by !== undefined) setProposedBy(data.proposed_by);
       if (data.selected_frame !== undefined) setSelectedFrame(data.selected_frame);
 
-      // Aksi hanya dikirim server ke lawan (pengirim sudah menerapkannya lokal),
-      // jadi tidak ada aksi yang dijalankan dua kali.
+      // Backend baru mengirim aksi hanya ke lawan. Backend lama membroadcast
+      // ke kedua pemain, jadi echo aksi milik sendiri harus diabaikan supaya
+      // foto tidak loncat dua kali.
+      if (data.action && isLocalActionEcho(data.action)) {
+        return;
+      }
+
       if (data.action === 'retake_current_shot') {
         handleLocalRetakeCurrentShot();
       } else if (data.action === 'next_shot') {
@@ -273,6 +337,7 @@ function Photobooth({
       try {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
         remoteDescSetRef.current = true;
+        clearOfferRetry();
         await flushPendingCandidates();
       } catch (err) {
         console.error("Gagal memasang WebRTC answer:", err);
@@ -329,7 +394,10 @@ function Photobooth({
 
     async function startCameraAndWebRTC() {
       try {
+        setCameraError('');
+
         if (!navigator.mediaDevices?.getUserMedia) {
+          setCameraError("BROWSER TIDAK MENDUKUNG KAMERA / HTTPS DIPERLUKAN");
           console.error("Browser tidak mendukung getUserMedia.");
           return;
         }
@@ -348,6 +416,20 @@ function Photobooth({
           localStreamRef.current = stream;
         }
 
+        // Get current TURN credentials from the backend. STUN remains a
+        // fallback when TURN has not yet been configured on the deployment.
+        try {
+          const response = await fetch(`${API_BASE_URL}/webrtc/ice-servers`);
+          if (response.ok) {
+            const config = await response.json();
+            if (Array.isArray(config.iceServers) && config.iceServers.length) {
+              iceServersRef.current = config;
+            }
+          }
+        } catch (err) {
+          console.warn('Gagal mengambil konfigurasi ICE; memakai STUN fallback:', err);
+        }
+
         // Pasang local stream ke box milik sendiri
         const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
         if (myVideoElem) {
@@ -359,10 +441,11 @@ function Photobooth({
         localReadyRef.current = true;
         createPeerConnection();
 
-        // Beri tahu lawan bahwa kamera kita siap
+        // Beri tahu lawan bahwa kamera kita siap (dipakai backend baru).
         socket.emit('webrtc_ready', { room_code: roomCode, role: myRole });
 
-        // P1 baru membuat offer setelah kamera sendiri + lawan siap
+        // P1 membuat offer begitu kamera sendiri siap. Tidak menunggu
+        // webrtc_ready lawan supaya tetap jalan dengan backend lama.
         if (isP1) {
           await maybeCreateOffer();
         }
@@ -375,6 +458,7 @@ function Photobooth({
         }
       } catch (err) {
         console.error("Gagal membuka kamera / WebRTC:", err);
+        setCameraError("KAMERA GAGAL DIBUKA. IZINKAN AKSES KAMERA LALU COBA LAGI.");
       }
     }
 
@@ -384,7 +468,7 @@ function Photobooth({
       cancelled = true;
       cleanupMedia();
     };
-  }, [phase, isP1]);
+  }, [phase, isP1, connectionAttempt]);
 
   // Saat pindah review -> countdown, elemen <video> dibuat ulang oleh React.
   // Pasang kembali stream supaya kamera tidak hitam setelah retake/lanjut foto.
@@ -399,6 +483,8 @@ function Photobooth({
   }, [phase, shootingSubPhase, isP1]);
 
   const cleanupMedia = () => {
+    clearOfferRetry();
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
       localStreamRef.current = null;
@@ -413,8 +499,16 @@ function Photobooth({
     remoteReadyRef.current = false;
     offerSentRef.current = false;
     remoteDescSetRef.current = false;
+    processingOfferRef.current = false;
     pendingCandidatesRef.current = [];
     pendingOfferRef.current = null;
+    setRemoteConnected(false);
+  };
+
+  const restartWebRTC = () => {
+    cleanupMedia();
+    setCameraError('');
+    setConnectionAttempt((prev) => prev + 1);
   };
 
   useEffect(() => {
@@ -510,7 +604,12 @@ function Photobooth({
     setShootingSubPhase('countdown');
   };
 
+  const markLocalAction = (action) => {
+    lastLocalActionRef.current = { action, at: Date.now() };
+  };
+
   const triggerRetakeCurrentShot = () => {
+    markLocalAction('retake_current_shot');
     handleLocalRetakeCurrentShot();
     socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
   };
@@ -543,6 +642,7 @@ function Photobooth({
   }, [phase, capturedPhotos, selectedFrame]);
 
   const triggerNextShotAction = () => {
+    markLocalAction('next_shot');
     handleLocalNextShot();
     socket.emit('photobooth_action', { room_code: roomCode, action: 'next_shot' });
   };
@@ -559,6 +659,7 @@ function Photobooth({
   };
 
   const triggerRetakeAllAction = () => {
+    markLocalAction('retake_all');
     handleLocalRetakeAll();
     socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_all' });
   };
@@ -634,6 +735,19 @@ function Photobooth({
   const handleConfirmTutorial = () => {
     if (localReadySent) return;
     setLocalReadySent(true);
+    setCameraError('');
+
+    // Minta izin kamera sekarang, saat masih ada user gesture. Safari/iOS
+    // kadang menolak getUserMedia yang dipicu belakangan oleh event socket.
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then((stream) => stream.getTracks().forEach((track) => track.stop()))
+        .catch((err) => {
+          console.warn("Izin kamera belum diberikan:", err);
+          setCameraError("IZINKAN AKSES KAMERA DI BROWSER, LALU COBA HUBUNGKAN ULANG.");
+        });
+    }
+
     socket.emit('photobooth_action', { room_code: roomCode, action: 'ready' });
   };
 
@@ -802,9 +916,20 @@ function Photobooth({
                             ref={localVideoRef1} 
                             autoPlay 
                             playsInline 
-                            muted={isP1} // Muted khusus stream lokal P1 agar tidak echo
+                            muted
                             style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
                           />
+                          {!isP1 && !remoteConnected && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5, 10, 20, 0.82)', color: '#8d99ae', fontFamily: 'monospace', fontSize: '0.6rem', textAlign: 'center', padding: '10px' }}>
+                              <span className="pixel-spinner" style={{ marginBottom: '8px' }}></span>
+                              MENUNGGU KAMERA LAWAN...
+                            </div>
+                          )}
+                          {isP1 && cameraError && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5, 10, 20, 0.88)', color: '#ffb703', fontFamily: 'monospace', fontSize: '0.6rem', textAlign: 'center', padding: '10px' }}>
+                              {cameraError}
+                            </div>
+                          )}
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
                             [ {player1Name.toUpperCase()} {isP1 ? '(YOU)' : ''} ]
                           </div>
@@ -816,9 +941,20 @@ function Photobooth({
                             ref={localVideoRef2} 
                             autoPlay 
                             playsInline 
-                            muted={!isP1} // Muted khusus stream lokal P2 agar tidak echo
+                            muted
                             style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} 
                           />
+                          {isP1 && !remoteConnected && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5, 10, 20, 0.82)', color: '#8d99ae', fontFamily: 'monospace', fontSize: '0.6rem', textAlign: 'center', padding: '10px' }}>
+                              <span className="pixel-spinner" style={{ marginBottom: '8px' }}></span>
+                              MENUNGGU KAMERA LAWAN...
+                            </div>
+                          )}
+                          {!isP1 && cameraError && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5, 10, 20, 0.88)', color: '#ffb703', fontFamily: 'monospace', fontSize: '0.6rem', textAlign: 'center', padding: '10px' }}>
+                              {cameraError}
+                            </div>
+                          )}
                           <div style={{ position: 'absolute', bottom: '8px', left: '8px', backgroundColor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem', padding: '2px 8px', fontFamily: 'monospace', borderRadius: '3px' }}>
                             [ {player2Name.toUpperCase()} {!isP1 ? '(YOU)' : ''} ]
                           </div>
@@ -839,6 +975,15 @@ function Photobooth({
                   <p style={{ marginTop: '10px', fontSize: '0.65rem', color: '#8d99ae', fontFamily: 'monospace' }}>
                     FRAME STYLE ACTIVE: <span style={{ color: selectedFrame.color, fontWeight: 'bold' }}>{selectedFrame.name}</span>
                   </p>
+                  {!remoteConnected && (
+                    <button
+                      onClick={restartWebRTC}
+                      className="ttt-action-btn exit-btn"
+                      style={{ marginTop: '8px', padding: '6px 10px', fontSize: '0.55rem' }}
+                    >
+                      [ HUBUNGKAN ULANG KAMERA ]
+                    </button>
+                  )}
                 </div>
 
                 {/* SIDEBAR PANEL TIMING & ACTIONS */}
