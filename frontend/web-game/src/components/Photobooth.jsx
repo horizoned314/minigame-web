@@ -9,16 +9,52 @@ const FRAME_OPTIONS = [
 ];
 
 const ICE_SERVERS = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    // TURN publik untuk membantu koneksi antar jaringan/NAT yang berbeda
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+  ],
+  iceCandidatePoolSize: 4,
 };
 
-function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard, isP1: isP1Prop }) {
-  // Fix Bug Role: Pastikan isP1 didapat dari props atau dari data room
-  const isP1 = isP1Prop !== undefined ? isP1Prop : (initialGameState?.p1_name ? currentUser === initialGameState.p1_name : true);
+const sameUser = (a, b) =>
+  String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
+
+function Photobooth({
+  currentUser,
+  opponentName,
+  roomCode,
+  player1Name: player1Prop,
+  player2Name: player2Prop,
+  initialGameState,
+  onBackToDashboard,
+  isP1: isP1Prop
+}) {
+  // ROLE: server selalu mengirim p1_name (host) dan p2_name (joiner).
+  // Sebelumnya kalau p1_name tidak ada, SEMUA device dianggap P1,
+  // sehingga dua-duanya membuat offer dan tidak ada yang menjawab.
+  const resolvedP1 = initialGameState?.p1_name || player1Prop || null;
+  const isP1 = isP1Prop !== undefined
+    ? isP1Prop
+    : resolvedP1
+      ? sameUser(currentUser, resolvedP1)
+      : (currentUser && opponentName
+        ? String(currentUser).toUpperCase() < String(opponentName).toUpperCase()
+        : true);
+
   const myRole = isP1 ? 'p1' : 'p2';
 
-  const player1Name = isP1 ? (currentUser || "P1") : (opponentName || "P1");
-  const player2Name = isP1 ? (opponentName || "P2") : (currentUser || "P2");
+  const player1Name = resolvedP1 || (isP1 ? currentUser : opponentName) || "P1";
+  const player2Name = initialGameState?.p2_name || player2Prop || (isP1 ? opponentName : currentUser) || "P2";
 
   const [localReadySent, setLocalReadySent] = useState(false);
   const [phase, setPhase] = useState(initialGameState?.phase || 'tutorial');
@@ -33,28 +69,88 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   const localVideoRef1 = useRef(null); // Box Kiri (P1)
   const localVideoRef2 = useRef(null); // Box Kanan (P2)
   const localStreamRef = useRef(null);
-  const remoteStreamRef = useRef(new MediaStream());
+  const remoteStreamRef = useRef(null);
   const pcRef = useRef(null);
 
-  const [photoCount, setPhotoCount] = useState(1);
+  // Penanda handshake WebRTC
+  const localReadyRef = useRef(false);
+  const remoteReadyRef = useRef(false);
+  const offerSentRef = useRef(false);
+  const remoteDescSetRef = useRef(false);
+  const pendingCandidatesRef = useRef([]);
+  const pendingOfferRef = useRef(null);
+
+  const [photoCount, setPhotoCount] = useState(initialGameState?.photo_count || 1);
   const [countdown, setCountdown] = useState(10);
   const [shootingSubPhase, setShootingSubPhase] = useState('countdown'); 
   const [reviewTimer, setReviewTimer] = useState(5);
   const [capturedPhotos, setCapturedPhotos] = useState([]); 
   const [isFlash, setIsFlash] = useState(false);
+  const snappingRef = useRef(false);
 
   const [finalPhotostripUrl, setFinalPhotostripUrl] = useState(null);
 
   const readyCount = (p1Ready ? 1 : 0) + (p2Ready ? 1 : 0);
   const isCurrentClientReady = isP1 ? p1Ready : p2Ready;
 
-  // 1. WEBRTC: SETUP PEER CONNECTION
+  // ==========================================
+  // WEBRTC: PEER CONNECTION + TRACKS
+  // ==========================================
+
+  const getRemoteStream = () => {
+    if (!remoteStreamRef.current) {
+      remoteStreamRef.current = new MediaStream();
+    }
+    return remoteStreamRef.current;
+  };
+
+  const attachRemoteStream = () => {
+    if (!remoteStreamRef.current) return;
+    const remoteVideoElem = isP1 ? localVideoRef2.current : localVideoRef1.current;
+    if (remoteVideoElem && remoteVideoElem.srcObject !== remoteStreamRef.current) {
+      remoteVideoElem.srcObject = remoteStreamRef.current;
+    }
+  };
+
+  const addLocalTracks = (pc) => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+
+    const existingTracks = new Set(
+      pc.getSenders().map((sender) => sender.track).filter(Boolean)
+    );
+
+    stream.getTracks().forEach((track) => {
+      if (!existingTracks.has(track)) {
+        pc.addTrack(track, stream);
+      }
+    });
+  };
+
+  const flushPendingCandidates = async () => {
+    const pc = pcRef.current;
+    if (!pc || !remoteDescSetRef.current) return;
+
+    const queued = pendingCandidatesRef.current;
+    pendingCandidatesRef.current = [];
+
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error("Gagal menambahkan ICE Candidate:", err);
+      }
+    }
+  };
+
   const createPeerConnection = () => {
-    if (pcRef.current) return pcRef.current;
+    if (pcRef.current) {
+      addLocalTracks(pcRef.current);
+      return pcRef.current;
+    }
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
-    // Pertukaran ICE Candidate
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit('webrtc_ice_candidate', {
@@ -64,133 +160,243 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       }
     };
 
-    // Tangkap Remote Stream dari lawan
     pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        remoteStreamRef.current.addTrack(track);
-      });
+      const stream = getRemoteStream();
 
-      // Pasang stream lawan ke video ref yang sesuai
-      const remoteVideoElem = isP1 ? localVideoRef2.current : localVideoRef1.current;
-      if (remoteVideoElem) {
-        remoteVideoElem.srcObject = remoteStreamRef.current;
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((track) => {
+          if (!stream.getTracks().includes(track)) stream.addTrack(track);
+        });
+      } else if (event.track) {
+        if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
       }
+
+      attachRemoteStream();
     };
 
-    // Tambahkan track webcam lokal ke PeerConnection
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current);
-      });
-    }
-
+    addLocalTracks(pc);
     pcRef.current = pc;
     return pc;
   };
 
-  // 2. LISTENER SOCKET (ROOM UPDATE & WEBRTC SIGNALING)
+  const maybeCreateOffer = async () => {
+    if (!isP1 || offerSentRef.current) return;
+    if (!localReadyRef.current || !remoteReadyRef.current) return;
+
+    try {
+      const pc = createPeerConnection();
+      offerSentRef.current = true;
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      socket.emit('webrtc_offer', {
+        room_code: roomCode,
+        offer
+      });
+    } catch (err) {
+      offerSentRef.current = false;
+      console.error("Gagal membuat WebRTC offer:", err);
+    }
+  };
+
+  // P2 memproses offer. Kalau kamera belum siap, offer disimpan dulu.
+  const processOffer = async (offer) => {
+    if (!offer) return;
+
+    if (!localStreamRef.current) {
+      pendingOfferRef.current = offer;
+      return;
+    }
+
+    try {
+      const pc = createPeerConnection();
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      remoteDescSetRef.current = true;
+      await flushPendingCandidates();
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socket.emit('webrtc_answer', {
+        room_code: roomCode,
+        answer
+      });
+    } catch (err) {
+      console.error("Gagal memproses WebRTC offer:", err);
+    }
+  };
+
+  // ==========================================
+  // SOCKET LISTENERS (ROOM UPDATE & WEBRTC SIGNALING)
+  // ==========================================
   useEffect(() => {
-    socket.on('photobooth_update', (data) => {
+    const handlePhotoboothUpdate = (data) => {
       if (data.phase) setPhase(data.phase);
       if (data.p1_ready !== undefined) setP1Ready(data.p1_ready);
       if (data.p2_ready !== undefined) setP2Ready(data.p2_ready);
-      if (data.proposed_frame) setProposedFrame(data.proposed_frame);
-      if (data.proposed_by) setProposedBy(data.proposed_by);
-      if (data.selected_frame) setSelectedFrame(data.selected_frame);
-      
-      if (data.action === 'retake_current_shot') handleLocalRetakeCurrentShot();
-      else if (data.action === 'next_shot') handleLocalNextShot();
-      else if (data.action === 'retake_all') handleLocalRetakeAll();
-    });
+      // Gunakan pengecekan !== undefined supaya nilai null dari server
+      // (misal proposal frame ditolak) benar-benar menghapus modal.
+      if (data.proposed_frame !== undefined) setProposedFrame(data.proposed_frame);
+      if (data.proposed_by !== undefined) setProposedBy(data.proposed_by);
+      if (data.selected_frame !== undefined) setSelectedFrame(data.selected_frame);
 
-    // WebRTC Signaling: Receive Offer (P2)
-    socket.on('webrtc_offer', async ({ offer }) => {
-      if (!isP1) {
-        const pc = createPeerConnection();
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        socket.emit('webrtc_answer', {
-          room_code: roomCode,
-          answer: answer
-        });
+      // Aksi hanya dikirim server ke lawan (pengirim sudah menerapkannya lokal),
+      // jadi tidak ada aksi yang dijalankan dua kali.
+      if (data.action === 'retake_current_shot') {
+        handleLocalRetakeCurrentShot();
+      } else if (data.action === 'next_shot') {
+        handleLocalNextShot(data.photo_count);
+      } else if (data.action === 'retake_all') {
+        handleLocalRetakeAll();
+      } else if (typeof data.photo_count === 'number') {
+        setPhotoCount(data.photo_count);
       }
-    });
+    };
 
-    // WebRTC Signaling: Receive Answer (P1)
-    socket.on('webrtc_answer', async ({ answer }) => {
-      if (isP1 && pcRef.current) {
+    const handleReady = () => {
+      remoteReadyRef.current = true;
+      if (isP1) maybeCreateOffer();
+    };
+
+    const handleOffer = ({ offer } = {}) => {
+      // Hanya P2 yang menjawab offer. Kalau dua-duanya menganggap diri P1,
+      // tidak akan pernah ada answer -> kamera lawan tidak muncul.
+      if (isP1) return;
+      processOffer(offer);
+    };
+
+    const handleAnswer = async ({ answer } = {}) => {
+      if (!isP1 || !answer || !pcRef.current) return;
+
+      try {
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+        remoteDescSetRef.current = true;
+        await flushPendingCandidates();
+      } catch (err) {
+        console.error("Gagal memasang WebRTC answer:", err);
       }
-    });
+    };
 
-    // WebRTC Signaling: Receive ICE Candidate
-    socket.on('webrtc_ice_candidate', async ({ candidate }) => {
-      if (pcRef.current && candidate) {
-        try {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error("Gagal menambahkan ICE Candidate:", err);
-        }
+    const handleIceCandidate = async ({ candidate } = {}) => {
+      if (!candidate) return;
+
+      if (!pcRef.current || !remoteDescSetRef.current) {
+        pendingCandidatesRef.current.push(candidate);
+        return;
       }
-    });
+
+      try {
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error("Gagal menambahkan ICE Candidate:", err);
+      }
+    };
+
+    socket.on('photobooth_update', handlePhotoboothUpdate);
+    socket.on('webrtc_ready', handleReady);
+    socket.on('webrtc_offer', handleOffer);
+    socket.on('webrtc_answer', handleAnswer);
+    socket.on('webrtc_ice_candidate', handleIceCandidate);
 
     return () => {
-      socket.off('photobooth_update');
-      socket.off('webrtc_offer');
-      socket.off('webrtc_answer');
-      socket.off('webrtc_ice_candidate');
+      socket.off('photobooth_update', handlePhotoboothUpdate);
+      socket.off('webrtc_ready', handleReady);
+      socket.off('webrtc_offer', handleOffer);
+      socket.off('webrtc_answer', handleAnswer);
+      socket.off('webrtc_ice_candidate', handleIceCandidate);
     };
   }, [isP1, roomCode]);
 
-  // 3. WEBCAM LOKAL & INISIALISASI WEBRTC CALL
+  // Minta state terbaru saat komponen muncul. Kalau satu klien sempat
+  // ketinggalan broadcast (misal refresh/reconnect), state tutorial/frame
+  // tidak akan nyangkut di layar lama.
   useEffect(() => {
-    if (phase === 'shooting') {
-      async function startCameraAndWebRTC() {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 },
-            audio: false
-          });
-          localStreamRef.current = stream;
+    socket.emit('init_photobooth_game', { room_code: roomCode });
+  }, [roomCode]);
 
-          // Pasang local stream ke ref lokal masing-masing
-          const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
-          if (myVideoElem) {
-            myVideoElem.srcObject = stream;
-          }
-
-          // Pasang remote stream yang mungkin sudah siap
-          const remoteVideoElem = isP1 ? localVideoRef2.current : localVideoRef1.current;
-          if (remoteVideoElem && remoteStreamRef.current.getTracks().length > 0) {
-            remoteVideoElem.srcObject = remoteStreamRef.current;
-          }
-
-          // Inisialisasi PeerConnection
-          const pc = createPeerConnection();
-
-          // P1 (Host) Menginisiasi Offer
-          if (isP1) {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('webrtc_offer', {
-              room_code: roomCode,
-              offer: offer
-            });
-          }
-        } catch (err) {
-          console.error("Gagal membuka kamera / WebRTC:", err);
-        }
-      }
-
-      startCameraAndWebRTC();
-    } else {
+  // ==========================================
+  // KAMERA LOKAL + MULAI HANDSHAKE WEBRTC
+  // ==========================================
+  useEffect(() => {
+    if (phase !== 'shooting') {
       cleanupMedia();
+      return;
     }
 
-    return () => cleanupMedia();
-  }, [phase]);
+    let cancelled = false;
+
+    async function startCameraAndWebRTC() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          console.error("Browser tidak mendukung getUserMedia.");
+          return;
+        }
+
+        let stream = localStreamRef.current;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+          });
+
+          if (cancelled) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          localStreamRef.current = stream;
+        }
+
+        // Pasang local stream ke box milik sendiri
+        const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
+        if (myVideoElem) {
+          myVideoElem.srcObject = stream;
+        }
+
+        attachRemoteStream();
+
+        localReadyRef.current = true;
+        createPeerConnection();
+
+        // Beri tahu lawan bahwa kamera kita siap
+        socket.emit('webrtc_ready', { room_code: roomCode, role: myRole });
+
+        // P1 baru membuat offer setelah kamera sendiri + lawan siap
+        if (isP1) {
+          await maybeCreateOffer();
+        }
+
+        // Kalau offer datang lebih dulu sebelum kamera siap, proses sekarang
+        if (pendingOfferRef.current) {
+          const offer = pendingOfferRef.current;
+          pendingOfferRef.current = null;
+          await processOffer(offer);
+        }
+      } catch (err) {
+        console.error("Gagal membuka kamera / WebRTC:", err);
+      }
+    }
+
+    startCameraAndWebRTC();
+
+    return () => {
+      cancelled = true;
+      cleanupMedia();
+    };
+  }, [phase, isP1]);
+
+  // Saat pindah review -> countdown, elemen <video> dibuat ulang oleh React.
+  // Pasang kembali stream supaya kamera tidak hitam setelah retake/lanjut foto.
+  useEffect(() => {
+    if (phase !== 'shooting' || shootingSubPhase !== 'countdown') return;
+
+    const myVideoElem = isP1 ? localVideoRef1.current : localVideoRef2.current;
+    if (myVideoElem && localStreamRef.current) {
+      myVideoElem.srcObject = localStreamRef.current;
+    }
+    attachRemoteStream();
+  }, [phase, shootingSubPhase, isP1]);
 
   const cleanupMedia = () => {
     if (localStreamRef.current) {
@@ -201,6 +407,14 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       pcRef.current.close();
       pcRef.current = null;
     }
+
+    remoteStreamRef.current = null;
+    localReadyRef.current = false;
+    remoteReadyRef.current = false;
+    offerSentRef.current = false;
+    remoteDescSetRef.current = false;
+    pendingCandidatesRef.current = [];
+    pendingOfferRef.current = null;
   };
 
   useEffect(() => {
@@ -228,39 +442,53 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     if (phase === 'shooting' && shootingSubPhase === 'review_snap') {
       if (reviewTimer > 0) {
         timer = setTimeout(() => setReviewTimer(prev => prev - 1), 1000);
-      } else {
+      } else if (isP1) {
+        // Hanya host yang auto-lanjut. Kalau dua-duanya auto-lanjut,
+        // server menerima dua aksi next_shot dan foto bisa loncat.
         triggerNextShotAction();
       }
     }
     return () => clearTimeout(timer);
-  }, [phase, shootingSubPhase, reviewTimer]);
+  }, [phase, shootingSubPhase, reviewTimer, isP1]);
 
   // 4. JEPRET FOTO LOKAL (TANPA SOCKET EMIT BASE64)
+  const drawVideoToCanvas = (video, ctx, width, height) => {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, width, height);
+
+    if (!video || video.readyState < 2) return;
+
+    try {
+      ctx.save();
+      ctx.translate(width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, width, height);
+      ctx.restore();
+    } catch (err) {
+      console.error("Gagal menggambar video ke canvas:", err);
+    }
+  };
+
   const triggerSnapPhoto = () => {
+    if (snappingRef.current) return;
+    snappingRef.current = true;
+
     setIsFlash(true);
     setTimeout(() => setIsFlash(false), 200);
 
-    // Canvas P1
+    // Canvas P1 (kiri)
     const canvas1 = document.createElement('canvas');
     canvas1.width = 640;
     canvas1.height = 480;
     const ctx1 = canvas1.getContext('2d');
-    if (localVideoRef1.current) {
-      ctx1.translate(canvas1.width, 0);
-      ctx1.scale(-1, 1);
-      ctx1.drawImage(localVideoRef1.current, 0, 0, canvas1.width, canvas1.height);
-    }
+    drawVideoToCanvas(localVideoRef1.current, ctx1, canvas1.width, canvas1.height);
 
-    // Canvas P2
+    // Canvas P2 (kanan)
     const canvas2 = document.createElement('canvas');
     canvas2.width = 640;
     canvas2.height = 480;
     const ctx2 = canvas2.getContext('2d');
-    if (localVideoRef2.current) {
-      ctx2.translate(canvas2.width, 0);
-      ctx2.scale(-1, 1);
-      ctx2.drawImage(localVideoRef2.current, 0, 0, canvas2.width, canvas2.height);
-    }
+    drawVideoToCanvas(localVideoRef2.current, ctx2, canvas2.width, canvas2.height);
 
     const snapA = canvas1.toDataURL('image/png');
     const snapB = canvas2.toDataURL('image/png');
@@ -276,7 +504,9 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   };
 
   const handleLocalRetakeCurrentShot = () => {
+    snappingRef.current = false;
     setCountdown(10);
+    setReviewTimer(5);
     setShootingSubPhase('countdown');
   };
 
@@ -285,24 +515,32 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
     socket.emit('photobooth_action', { room_code: roomCode, action: 'retake_current_shot' });
   };
 
-  const handleLocalNextShot = () => {
+  const handleLocalNextShot = (serverPhotoCount) => {
+    const serverTarget = typeof serverPhotoCount === 'number'
+      ? Math.min(Math.max(serverPhotoCount, 1), 3)
+      : null;
+
     setPhotoCount((prevCount) => {
-      if (prevCount < 3) {
-        setCountdown(10);
-        setShootingSubPhase('countdown');
-        return prevCount + 1;
-      } else {
+      if (serverTarget === null && prevCount >= 3) {
         setPhase('result');
-        return prevCount;
+        return 3;
       }
+
+      snappingRef.current = false;
+      setCountdown(10);
+      setReviewTimer(5);
+      setShootingSubPhase('countdown');
+      return serverTarget ?? Math.min(prevCount + 1, 3);
     });
   };
 
   useEffect(() => {
-    if (phase === 'result' && capturedPhotos.length >= 3) {
+    // Jangan menunggu tepat 3 foto: kalau satu jepretan terlewat karena
+    // tab sempat di-background, photostrip tetap dibuat dari foto yang ada.
+    if (phase === 'result' && capturedPhotos.some(Boolean)) {
       generateFinalPhotostrip(capturedPhotos, selectedFrame);
     }
-  }, [phase, capturedPhotos]);
+  }, [phase, capturedPhotos, selectedFrame]);
 
   const triggerNextShotAction = () => {
     handleLocalNextShot();
@@ -310,8 +548,10 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
   };
 
   const handleLocalRetakeAll = () => {
+    snappingRef.current = false;
     setPhotoCount(1);
     setCountdown(10);
+    setReviewTimer(5);
     setCapturedPhotos([]);
     setFinalPhotostripUrl(null);
     setShootingSubPhase('countdown');
@@ -359,15 +599,16 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
       canvas.height = 1800;
       const ctx = canvas.getContext('2d');
 
-      const frameImgPromise = loadImage(frameObj.src);
-      const snapsPromises = snaps.slice(0, 3).map(async (snap) => {
+      const snapsPromises = Array.from({ length: 3 }, async (_, idx) => {
+        const snap = snaps[idx];
+        if (!snap) return { imgA: null, imgB: null };
         const imgA = snap.a ? await loadImage(snap.a) : null;
         const imgB = snap.b ? await loadImage(snap.b) : null;
         return { imgA, imgB };
       });
 
       const [frameImg, loadedSnaps] = await Promise.all([
-        frameImgPromise,
+        loadImage(frameObj.src).catch(() => null),
         Promise.all(snapsPromises)
       ]);
 
@@ -383,7 +624,7 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
         if (imgB) drawImageCover(ctx, imgB, 295, y, photoW, photoH);
       });
 
-      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      if (frameImg) ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
       setFinalPhotostripUrl(canvas.toDataURL('image/png'));
     } catch (err) {
       console.error("Gagal membuat photostrip:", err);
@@ -487,9 +728,14 @@ function Photobooth({ currentUser, opponentName, roomCode, initialGameState, onB
                 </button>
               </div>
             ) : (
-              <p style={{ fontSize: '0.65rem', color: '#ffb703', fontFamily: 'monospace' }}>
-                [ WAITING FOR CONFIRMATION... ]
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                <p style={{ fontSize: '0.65rem', color: '#ffb703', fontFamily: 'monospace' }}>
+                  [ WAITING FOR CONFIRMATION... ]
+                </p>
+                <button className="ttt-action-btn exit-btn" onClick={() => handleConfirmFrame(false)}>
+                  [ CANCEL ]
+                </button>
+              </div>
             )}
           </div>
         </div>

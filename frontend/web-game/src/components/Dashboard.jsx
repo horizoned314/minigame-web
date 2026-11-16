@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { socket } from '../socket';
 
 const MailIcon = () => (
@@ -7,7 +7,9 @@ const MailIcon = () => (
   </svg>
 );
 
-function Dashboard({ currentUser, onLogout, onStartGame }) {
+function Dashboard({ currentUser, onLogout }) {
+  const API_BASE_URL = 'https://api.playgrounds.web.id';
+
   const minigames = [
     { id: 'tictactoe', name: 'TIC TAC TOE', desc: 'CONNECT 3 TO WIN' },
     { id: 'gartic', name: 'GARTIC', desc: 'DRAW AND GUESS' },
@@ -19,13 +21,16 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
   const [showMailDropdown, setShowMailDropdown] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
   const [targetFriend, setTargetFriend] = useState('');
+  const [createdRoomCode, setCreatedRoomCode] = useState('');
+  const [createdInviteId, setCreatedInviteId] = useState(null);
+  const inviteFlowRef = useRef(0);
 
   const [invitations, setInvitations] = useState([]);
 
   useEffect(() => {
     const fetchInvites = async () => {
       try {
-        const response = await fetch(`https://api.playgrounds.web.id/invites/${currentUser.toUpperCase()}`, {
+        const response = await fetch(`${API_BASE_URL}/invites/${encodeURIComponent(currentUser.toUpperCase())}`, {
         });
         if (response.ok) {
           const data = await response.json();
@@ -48,27 +53,6 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // Cari bagian ini di Dashboard.jsx lalu urutannya disesuaikan:
-  useEffect(() => {
-    function handleGameStart(payload) {
-      console.log("[SOCKET] trigger_game_start diterima:", payload);
-      setIsWaiting(false);
-    
-      const opponentString = payload.players.find(
-        (p) => p.toUpperCase() !== currentUser.toUpperCase()
-      ) || "OPPONENT";
-
-      const gameType = payload.game_type || "tictactoe";
-      const gameState = payload[`${gameType}_state`] || {};
-
-      // FIX URUTAN PARAMETER: opponent, room_code, gameState, gameType
-      onStartGame(opponentString, payload.room_code, gameState, gameType); 
-    }
-
-    socket.on("trigger_game_start", handleGameStart);
-    return () => socket.off("trigger_game_start", handleGameStart);
-  }, [currentUser, onStartGame]);
-  
   const handleInviteFriend = async (e, gameName, gameId) => {
     e.preventDefault();
 
@@ -77,22 +61,40 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
       return;
     }
 
-    const cleanName = friendName.toUpperCase();
+    const cleanName = friendName.trim().toUpperCase();
+
+    if (cleanName === String(currentUser).toUpperCase()) {
+      alert("YOU CANNOT INVITE YOURSELF!");
+      return;
+    }
+
+    // Setiap alur undangan punya id sendiri. Kalau user menekan CANCEL saat
+    // request masih berjalan, hasil request yang telat tidak boleh membuat
+    // room/undangan yatim.
+    const flowId = ++inviteFlowRef.current;
 
     setTargetFriend(cleanName);
     setIsWaiting(true);
 
-    socket.emit("create_room", { game_type: gameId }, async (res) => {
-      if (res.status !== "success") {
-        alert(res.message);
+    socket.timeout(8000).emit("create_room", { game_type: gameId }, async (err, res) => {
+      if (flowId !== inviteFlowRef.current) {
+        if (res?.status === "success" && res.room_code) {
+          socket.emit("leave_room", { room_code: res.room_code });
+        }
+        return;
+      }
+
+      if (err || !res || res.status !== "success") {
+        alert(err ? "Server tidak merespons. Coba lagi." : (res?.message || "Gagal membuat room"));
         setIsWaiting(false);
         return;
       }
 
       const roomCode = res.room_code;
+      setCreatedRoomCode(roomCode);
 
       try {
-        const response = await fetch("https://api.playgrounds.web.id/invites/", {
+        const response = await fetch(`${API_BASE_URL}/invites/`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -107,12 +109,24 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
 
         const data = await response.json();
 
+        if (flowId !== inviteFlowRef.current) {
+          // User sudah membatalkan; bersihkan undangan + room yang telat dibuat.
+          if (response.ok && data.id) {
+            fetch(`${API_BASE_URL}/invites/${data.id}`, { method: "DELETE" }).catch(() => {});
+          }
+          socket.emit("leave_room", { room_code: roomCode });
+          return;
+        }
+
         if (!response.ok) {
           alert(data.detail || "ERROR");
+          socket.emit("leave_room", { room_code: roomCode });
+          setCreatedRoomCode('');
           setIsWaiting(false);
           return;
         }
 
+        setCreatedInviteId(data.id || null);
         alert(`INVITATION SENT TO [${cleanName}]!`);
 
         setFriendName("");
@@ -120,44 +134,91 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
 
       } catch (err) {
         console.error(err);
+        socket.emit("leave_room", { room_code: roomCode });
+        setCreatedRoomCode('');
+        setIsWaiting(false);
+        alert("Gagal mengirim undangan. Coba lagi.");
       }
     });
   };
 
-  const handleCancelInvite = () => {
+  const handleCancelInvite = async () => {
+    // Invalidate alur undangan yang mungkin masih menunggu respons.
+    inviteFlowRef.current += 1;
+
+    const inviteId = createdInviteId;
+
+    // Hapus undangan yang masih pending supaya tidak muncul di kotak masuk teman
+    if (inviteId) {
+      try {
+        await fetch(`${API_BASE_URL}/invites/${inviteId}`, { method: "DELETE" });
+      } catch (err) {
+        console.error("Gagal membatalkan undangan:", err);
+      }
+    }
+
+    // Keluar dari room supaya event dari room lama tidak nyasar ke layar game
+    if (createdRoomCode) {
+      socket.emit("leave_room", { room_code: createdRoomCode });
+    }
+
+    setCreatedInviteId(null);
+    setCreatedRoomCode('');
     setIsWaiting(false);
     setTargetFriend('');
+  };
+
+  const handleLogout = async () => {
+    // Jangan tinggalkan undangan pending / room yatim saat keluar.
+    if (createdInviteId || createdRoomCode || isWaiting) {
+      await handleCancelInvite();
+    }
+    onLogout();
   };
 
   const handleAcceptInvite = async (inviteId, roomCode, inviter) => {
     try {
       const response = await fetch(
-        `https://api.playgrounds.web.id/invites/${inviteId}/accept`,
+        `${API_BASE_URL}/invites/${inviteId}/accept`,
         {
           method: "PUT"
         }
       );
 
-      if (!response.ok) return;
+      if (!response.ok) {
+        alert("Undangan sudah tidak valid.");
+        setInvitations((prev) => prev.filter((inv) => inv.id !== inviteId));
+        return;
+      }
+
+      // Gunakan room_code dari server. Kalau pengundang sempat memperbarui
+      // undangan (room baru), data lama di inbox bisa menunjuk room yang salah.
+      const accepted = await response.json().catch(() => ({}));
+      const activeRoomCode = accepted.room_code || roomCode;
 
       setInvitations((prev) =>
         prev.filter((inv) => inv.id !== inviteId)
       );
 
-      socket.emit("join_room", {
-        room_code: roomCode,
+      socket.timeout(8000).emit("join_room", {
+        room_code: activeRoomCode,
         inviter: inviter,
         invitee: currentUser
+      }, (err, res) => {
+        if (err || !res || res.status !== "success") {
+          alert(err ? "Server tidak merespons. Coba lagi." : (res?.message || "Gagal masuk ke room. Mungkin room sudah ditutup."));
+        }
       });
 
     } catch (err) {
       console.error(err);
+      alert("Gagal menerima undangan.");
     }
   };
 
   const handleRejectInvite = async (id) => {
     try {
-      const response = await fetch(`https://api.playgrounds.web.id/invites/${id}/reject`, {
+      const response = await fetch(`${API_BASE_URL}/invites/${id}/reject`, {
         method: "PUT"
       });
       
@@ -245,7 +306,7 @@ function Dashboard({ currentUser, onLogout, onStartGame }) {
             <span className="blinking-green-dot"></span>
           </div>
           
-          <button className="dash-logout-btn" onClick={onLogout}>[EXIT]</button>
+          <button className="dash-logout-btn" onClick={handleLogout}>[EXIT]</button>
         </div>
       </header>
 

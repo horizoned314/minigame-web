@@ -22,7 +22,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173", 
         "http://127.0.0.1:5173",
-        "https://playgrounds-game.vercel.app", # <-- Sudah bersih dari tanda slash /
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "https://playgrounds-game.vercel.app",
+        "https://playgrounds.web.id",
+        "https://www.playgrounds.web.id",
     ]
 
     model_config = ConfigDict(env_file=".env", extra="ignore")

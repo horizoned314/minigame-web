@@ -49,7 +49,14 @@ async def handle_move(sid, data):
         return
         
     game = room["tictactoe"]
-    
+    username = str(username)
+
+    # Validasi dasar: index harus 0-8 dan pemain harus bagian dari game ini
+    if not isinstance(index, int) or index < 0 or index > 8:
+        return
+    if username not in (game["player_x"], game["player_o"]):
+        return
+
     # Validasi Keamanan: Abaikan jika bukan giliran, kotak sudah terisi, game usai, ATAU TUTORIAL BELUM SELESAI
     if not game.get("tutorial_finished") or game["current_turn"] != username or game["board"][index] is not None or game["round_winner"]:
         return
@@ -102,6 +109,10 @@ async def handle_action(sid, data):
         return
         
     game = room["tictactoe"]
+    username = str(username)
+
+    if username not in (game["player_x"], game["player_o"]):
+        return
     
     # ==========================================
     # LOGIKA BARU: PENANGANAN TUTORIAL "READY"
@@ -110,29 +121,45 @@ async def handle_action(sid, data):
         # 1. Buat penyimpanan set() untuk mencatat pemain yang sudah ready
         if "ready_players" not in room:
             room["ready_players"] = set()
-            
+
+        if username not in (game["player_x"], game["player_o"]):
+            return
+
         # 2. Catat pemain ini sebagai "Ready"
         room["ready_players"].add(username)
         print(f"✅ {username} sudah siap. Total: {len(room['ready_players'])}/2 di Room {room_code}")
+
+        # Sinkronkan status ready ke state game supaya KEDUA pemain melihat (1/2), (2/2)
+        game["ready_players"] = sorted(room["ready_players"])
+        game["p1_ready"] = game["player_x"] in room["ready_players"]
+        game["p2_ready"] = game["player_o"] in room["ready_players"]
 
         # 3. Jika kedua pemain sudah mengklik ready
         if len(room["ready_players"]) >= 2:
             print(f"🎮 KEDUA PEMAIN SIAP! Memulai Tic-Tac-Toe di Room {room_code}")
             
-            # Bersihkan catatan untuk jaga-jaga
             room["ready_players"].clear()
             
             # Ubah bendera game state
             game["tutorial_finished"] = True
-            
-            # Tembakkan update secara massal
-            await sio.emit("tictactoe_update", game, room=room_code)
-            
+            game["ready_players"] = []
+            game["p1_ready"] = False
+            game["p2_ready"] = False
+
+        # Tembakkan update secara massal (baik baru 1/2 maupun sudah 2/2)
+        await sio.emit("tictactoe_update", game, room=room_code)
+
         # Wajib di-return di sini agar tidak mengeksekusi logika di bawahnya
         return
     # ==========================================
     
-    elif action == "next_round" and game["round"] < 3:
+    elif action == "next_round":
+        # Hanya boleh lanjut kalau ronde sebelumnya memang sudah selesai.
+        # Tanpa guard ini, dua pemain yang menekan tombol hampir bersamaan
+        # bisa menaikkan ronde dua kali (ronde terlewati).
+        if not game["round_winner"] or game["is_game_over"] or game["round"] >= 3:
+            return
+
         game["round"] += 1
         game["board"] = [None] * 9
         game["round_winner"] = None
@@ -140,6 +167,11 @@ async def handle_action(sid, data):
         game["current_turn"] = game["player_o"] if game["round"] % 2 == 0 else game["player_x"]
         
     elif action == "rematch":
+        # Rematch hanya valid setelah match benar-benar selesai. Ini mencegah
+        # double-rematch saat kedua pemain menekan tombol bersamaan.
+        if not game["is_game_over"]:
+            return
+
         # Reset ulang total state (Panggil fungsi init)
         new_state = init_tictactoe(game["player_x"], game["player_o"])
         new_state["tutorial_finished"] = True # Pastikan tutorial tidak muncul lagi saat rematch

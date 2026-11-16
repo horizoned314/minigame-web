@@ -2,6 +2,15 @@ import React, { useState, useEffect } from 'react';
 import ChatBox from './ChatBox';
 import { socket } from '../socket'; 
 
+const sameUser = (a, b) =>
+  String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase();
+
+const findScore = (scores, name) => {
+  if (!scores || !name) return undefined;
+  const key = Object.keys(scores).find((k) => sameUser(k, name));
+  return key !== undefined ? scores[key] : undefined;
+};
+
 function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBackToDashboard }) {
   
   // ==========================================
@@ -22,7 +31,10 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
   const [playerO, setPlayerO] = useState(initialGameState?.player_o || null);
   const [currentTurn, setCurrentTurn] = useState(initialGameState?.current_turn || null); 
   const [round, setRound] = useState(initialGameState?.round || 1);
-  const [scores, setScores] = useState({ p1: 0, p2: 0 });
+  const [scores, setScores] = useState({
+    p1: findScore(initialGameState?.scores, currentUser) ?? 0,
+    p2: findScore(initialGameState?.scores, opponentName) ?? 0,
+  });
   const [roundWinner, setRoundWinner] = useState(initialGameState?.round_winner || null); 
   const [isGameOver, setIsGameOver] = useState(initialGameState?.is_game_over || false);
   const [finalWinnerMessage, setFinalWinnerMessage] = useState(initialGameState?.final_message || '');
@@ -31,14 +43,14 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
   const player2Name = opponentName || "P2";
 
   // Hitungan visual untuk di tombol (berapa orang yang udah ready)
-  const isMeReady = readyPlayers.includes(currentUser) || (currentUser === player1Name ? p1Ready : p2Ready);
+  const isMeReady = readyPlayers.some((p) => sameUser(p, currentUser)) || (currentUser === player1Name ? p1Ready : p2Ready);
   const readyCount = readyPlayers.length > 0 ? readyPlayers.length : ((p1Ready ? 1 : 0) + (p2Ready ? 1 : 0));
 
   useEffect(() => {
     if (initialGameState?.scores) {
       setScores({
-        p1: initialGameState.scores[player1Name] || initialGameState.scores[player1Name.toLowerCase()] || 0,
-        p2: initialGameState.scores[player2Name] || initialGameState.scores[player2Name.toLowerCase()] || 0
+        p1: findScore(initialGameState.scores, player1Name) ?? 0,
+        p2: findScore(initialGameState.scores, player2Name) ?? 0
       });
     }
 
@@ -62,8 +74,8 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
       if (gameState.player_o) setPlayerO(gameState.player_o);
       
       setScores({
-        p1: gameState.scores[player1Name] || gameState.scores[player1Name.toLowerCase()] || 0,
-        p2: gameState.scores[player2Name] || gameState.scores[player2Name.toLowerCase()] || 0
+        p1: findScore(gameState.scores, player1Name) ?? 0,
+        p2: findScore(gameState.scores, player2Name) ?? 0
       });
 
       setRoundWinner(gameState.round_winner);
@@ -150,9 +162,9 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
           <h2 className="ttt-title">TIC TAC TOE</h2>
           
           <div className="ttt-scoreboard">
-            <div className={`score-card ${currentTurn === player1Name && !roundWinner ? 'active-turn' : ''}`}>
+            <div className={`score-card ${sameUser(currentTurn, player1Name) && !roundWinner ? 'active-turn' : ''}`}>
               <span className="player-tag">
-                [{player1Name === playerX ? 'X' : 'O'}] {player1Name?.toUpperCase() || "PLAYER 1"}
+                [{sameUser(player1Name, playerX) ? 'X' : 'O'}] {player1Name?.toUpperCase() || "PLAYER 1"}
               </span>
               <span className="player-points">{scores.p1} PTS</span>
             </div>
@@ -160,9 +172,9 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
               <span>ROUND</span>
               <span className="round-number">{round} / 3</span>
             </div>
-            <div className={`score-card ${currentTurn === player2Name && !roundWinner ? 'active-turn' : ''}`}>
+            <div className={`score-card ${sameUser(currentTurn, player2Name) && !roundWinner ? 'active-turn' : ''}`}>
               <span className="player-tag">
-                [{player2Name === playerX ? 'X' : 'O'}] {player2Name?.toUpperCase() || "PLAYER 2"}
+                [{sameUser(player2Name, playerX) ? 'X' : 'O'}] {player2Name?.toUpperCase() || "PLAYER 2"}
               </span>
               <span className="player-points">{scores.p2} PTS</span>
             </div>
@@ -171,12 +183,12 @@ function TicTacToe({ currentUser, opponentName, roomCode, initialGameState, onBa
           <div className="ttt-status-bar">
             {!roundWinner && !isGameOver && (
               <p className="status-text">
-                {currentTurn === currentUser ? "YOUR TURN" : `${currentTurn?.toUpperCase() || "OPPONENT"}'S TURN`}
+                {sameUser(currentTurn, currentUser) ? "YOUR TURN" : `${currentTurn?.toUpperCase() || "OPPONENT"}'S TURN`}
               </p>
             )}
             {roundWinner && roundWinner !== 'DRAW' && (
               <p className="status-text winner-highlight">
-                {roundWinner === player1Name ? `${player1Name?.toUpperCase()} WINS ROUND ${round}!` : `${player2Name?.toUpperCase()} WINS ROUND ${round}!`}
+                {sameUser(roundWinner, player1Name) ? `${player1Name?.toUpperCase()} WINS ROUND ${round}!` : `${player2Name?.toUpperCase()} WINS ROUND ${round}!`}
               </p>
             )}
             {roundWinner === 'DRAW' && <p className="status-text draw-highlight">ROUND {round} IS A DRAW!</p>}
